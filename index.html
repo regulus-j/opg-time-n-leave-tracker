@@ -288,6 +288,33 @@
   }
   .clock-right{position:relative;z-index:1;display:flex;flex-direction:column;align-items:flex-end;gap:10px;}
   .clock-right .elapsed{font-size:12.5px;color:rgba(255,251,243,.65);}
+  .job-picker{
+    margin-top:14px;
+    display:flex;
+    align-items:center;
+    gap:9px;
+    position:relative;
+    z-index:1;
+  }
+  .job-picker label{
+    font-size:11px;
+    color:rgba(255,251,243,.6);
+    text-transform:uppercase;
+    letter-spacing:.07em;
+  }
+  .job-select{
+    background:rgba(255,251,243,.12);
+    border:1px solid rgba(255,251,243,.28);
+    color:var(--paper);
+    padding:7px 10px;
+    border-radius:7px;
+    font-size:12.5px;
+    outline:none;
+    max-width:220px;
+  }
+  .job-select:focus{border-color:var(--amber);}
+  .job-select:disabled{opacity:.55;cursor:not-allowed;}
+  .job-select option{color:var(--ink);}
   .clock-btn{
     padding:14px 30px;
     border-radius:10px;
@@ -395,6 +422,10 @@
     align-items:start;
   }
   .leave-form .field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .badge.corrected{background:rgba(251,108,0,.14);color:var(--orange);}
+  .badge.cancelled{background:rgba(43,27,18,.08);color:var(--ink-soft);}
+  .btn-mini{padding:5px 11px;font-size:11.5px;border-radius:6px;}
   select.field-input, textarea.field-input{
     width:100%;
     padding:11px 13px;
@@ -644,6 +675,49 @@
           <tbody id="timesheetBody"></tbody>
         </table>
       </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Request a correction</h2>
+          <span class="hint">Missed a clock-in/out, or logged the wrong time?</span>
+        </div>
+        <div id="correctionForm">
+          <div class="field-row">
+            <div class="field">
+              <label for="correctionDay">Date</label>
+              <select class="field-input" id="correctionDay"></select>
+            </div>
+            <div class="field">
+              <label for="correctionIn">Corrected check-in</label>
+              <input type="time" class="field-input" id="correctionIn">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="correctionOut">Corrected check-out</label>
+              <input type="time" class="field-input" id="correctionOut">
+            </div>
+            <div class="field">
+              <label for="correctionReason">Reason</label>
+              <input type="text" class="field-input" id="correctionReason" placeholder="e.g. Forgot to clock out">
+            </div>
+          </div>
+          <button type="button" id="correctionSubmit" class="btn btn-primary">Submit for approval</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>My correction requests</h2>
+          <span class="hint" id="correctionCount">0 requests</span>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Date</th><th>Requested in</th><th>Requested out</th><th>Status</th></tr>
+          </thead>
+          <tbody id="correctionsBody"></tbody>
+        </table>
+      </div>
     </section>
 
     <!-- ---------------- LEAVE PANEL ---------------- -->
@@ -706,7 +780,7 @@
           </div>
           <table>
             <thead>
-              <tr><th>Type</th><th>From</th><th>To</th><th>Days</th><th>Status</th></tr>
+              <tr><th>Type</th><th>From</th><th>To</th><th>Days</th><th>Status</th><th>Actions</th></tr>
             </thead>
             <tbody id="requestsBody"></tbody>
           </table>
@@ -1032,6 +1106,7 @@
     if(status === "ok") return '<span class="badge ok">On time</span>';
     if(status === "leave") return '<span class="badge leave">On leave</span>';
     if(status === "today") return '<span class="badge pending">In progress</span>';
+    if(status === "corrected") return '<span class="badge corrected">Corrected</span>';
     return '<span class="badge weekend">—</span>';
   }
 
@@ -1046,6 +1121,12 @@
         "<td>" + statusBadge(row.status) + "</td>" +
       "</tr>";
     }).join("");
+    var correctionDaySelect = document.getElementById("correctionDay");
+    if(correctionDaySelect){
+      var prevVal = correctionDaySelect.value;
+      correctionDaySelect.innerHTML = weekData.map(function(row){ return '<option value="' + row.day + '">' + row.day + '</option>'; }).join("");
+      if(weekData.some(function(r){ return r.day === prevVal; })) correctionDaySelect.value = prevVal;
+    }
   }
   renderTimesheet();
 
@@ -1094,25 +1175,45 @@
   var requestsBody = document.getElementById("requestsBody");
   var requestCount = document.getElementById("requestCount");
   var requests = [
-    {type:"Casual Leave", from:"Aug 14", to:"Aug 14", days:1, status:"approved"},
-    {type:"Sick Leave", from:"Jul 30", to:"Aug 1", days:3, status:"approved"},
-    {type:"Earned Leave", from:"Sep 15", to:"Sep 19", days:5, status:"pending"},
-    {type:"Casual Leave", from:"Jun 3", to:"Jun 3", days:1, status:"rejected"}
+    {id:1, type:"Casual Leave", from:"Aug 14", to:"Aug 14", days:1, status:"approved"},
+    {id:2, type:"Sick Leave", from:"Jul 30", to:"Aug 1", days:3, status:"approved"},
+    {id:3, type:"Earned Leave", from:"Sep 15", to:"Sep 19", days:5, status:"pending"},
+    {id:4, type:"Casual Leave", from:"Jun 3", to:"Jun 3", days:1, status:"rejected"}
   ];
+  var nextRequestId = 5;
 
   function renderRequests(){
     requestsBody.innerHTML = requests.map(function(r){
+      var action = r.status === "pending"
+        ? '<button type="button" class="btn btn-ghost btn-mini withdraw-btn" data-id="' + r.id + '">Withdraw</button>'
+        : "—";
       return "<tr>" +
         "<td>" + r.type + "</td>" +
         "<td>" + r.from + "</td>" +
         "<td>" + r.to + "</td>" +
         "<td>" + r.days + "</td>" +
         '<td><span class="badge ' + r.status + '">' + r.status.charAt(0).toUpperCase() + r.status.slice(1) + "</span></td>" +
+        "<td>" + action + "</td>" +
       "</tr>";
     }).join("");
     requestCount.textContent = requests.length + " requests";
+
+    requestsBody.querySelectorAll(".withdraw-btn").forEach(function(btn){
+      btn.addEventListener("click", function(){ withdrawRequest(Number(btn.dataset.id)); });
+    });
   }
   renderRequests();
+
+  function withdrawRequest(id){
+    var req = requests.find(function(r){ return r.id === id; });
+    if(!req || req.status !== "pending") return;
+    req.status = "cancelled";
+    var bal = balances.find(function(b){ return b.type === req.type; });
+    if(bal) bal.used = Math.max(0, bal.used - req.days);
+    renderRequests();
+    renderBalances();
+    showToast("Withdrawn — " + req.days + " day" + (req.days===1?"":"s") + " restored to your " + req.type + " balance.");
+  }
 
   /* ---------- LEAVE FORM ---------- */
   var leaveSubmit = document.getElementById("leaveSubmit");
@@ -1151,6 +1252,7 @@
       return;
     }
     requests.unshift({
+      id: nextRequestId++,
       type: type,
       from: new Date(fromDate.value).toLocaleDateString(undefined,{month:"short", day:"numeric"}),
       to: new Date(toDate.value).toLocaleDateString(undefined,{month:"short", day:"numeric"}),
@@ -1168,6 +1270,82 @@
   });
 
   renderNow();
+
+  /* ---------- ATTENDANCE CORRECTIONS (employee side) ---------- */
+  var correctionsBody = document.getElementById("correctionsBody");
+  var correctionCount = document.getElementById("correctionCount");
+  var correctionRequests = [
+    {id:1001, kind:"correction", name:"Amara Mendez", dayLabel:"Wed 27", requestedIn:"09:02", requestedOut:"18:15", reason:"Client call ran long, forgot to log the exact time.", status:"approved"}
+  ];
+  var nextCorrectionId = 1002;
+
+  function timeLabel(t){
+    if(!t) return "—";
+    var parts = t.split(":");
+    var h = Number(parts[0]), m = parts[1];
+    var suffix = h >= 12 ? "PM" : "AM";
+    var h12 = h % 12; if(h12 === 0) h12 = 12;
+    return h12 + ":" + m + " " + suffix;
+  }
+
+  function hoursBetween(inT, outT){
+    var a = inT.split(":"), b = outT.split(":");
+    var start = Number(a[0]) * 60 + Number(a[1]);
+    var end = Number(b[0]) * 60 + Number(b[1]);
+    var diff = end - start;
+    if(diff < 0) diff += 24 * 60;
+    return diff / 60;
+  }
+
+  function renderMyCorrections(){
+    correctionsBody.innerHTML = correctionRequests.map(function(r){
+      return "<tr>" +
+        "<td>" + r.dayLabel + "</td>" +
+        "<td>" + timeLabel(r.requestedIn) + "</td>" +
+        "<td>" + timeLabel(r.requestedOut) + "</td>" +
+        '<td><span class="badge ' + r.status + '">' + r.status.charAt(0).toUpperCase() + r.status.slice(1) + "</span></td>" +
+      "</tr>";
+    }).join("");
+    correctionCount.textContent = correctionRequests.length + (correctionRequests.length === 1 ? " request" : " requests");
+  }
+  renderMyCorrections();
+
+  document.getElementById("correctionSubmit").addEventListener("click", function(){
+    var day = document.getElementById("correctionDay").value;
+    var inTime = document.getElementById("correctionIn").value;
+    var outTime = document.getElementById("correctionOut").value;
+    var reason = document.getElementById("correctionReason").value.trim();
+
+    if(!day || !inTime || !outTime){
+      showToast("Pick a date and both times first.");
+      return;
+    }
+    if(!reason){
+      showToast("Add a short reason so your manager has context.");
+      return;
+    }
+
+    correctionRequests.unshift({
+      id: nextCorrectionId++,
+      kind: "correction",
+      name: "Amara Mendez",
+      dayLabel: day,
+      requestedIn: inTime,
+      requestedOut: outTime,
+      reason: reason,
+      status: "pending"
+    });
+
+    renderMyCorrections();
+    document.getElementById("correctionIn").value = "";
+    document.getElementById("correctionOut").value = "";
+    document.getElementById("correctionReason").value = "";
+    showToast("Correction request sent to your manager.");
+
+    // keep the manager's queue in sync if it's already been rendered
+    if(typeof renderApprovals === "function") renderApprovals();
+    if(typeof renderTeamStats === "function") renderTeamStats();
+  });
 
   /* =====================================================================
      MANAGER VIEW
@@ -1195,7 +1373,7 @@
     teamStats.innerHTML =
       '<div class="stat-card"><div class="label">Headcount</div><div class="value">' + team.length + '</div></div>' +
       '<div class="stat-card"><div class="label">Active projects</div><div class="value">' + projectsInUse.size + '</div></div>' +
-      '<div class="stat-card"><div class="label">Pending approvals</div><div class="value" id="teamStatsPending">' + pendingApprovals.length + '</div></div>' +
+      '<div class="stat-card"><div class="label">Pending approvals</div><div class="value" id="teamStatsPending">' + (pendingApprovals.length + (typeof correctionRequests !== "undefined" ? pendingCorrections().length : 0)) + '</div></div>' +
       '<div class="stat-card"><div class="label">Avg. hourly rate</div><div class="value">$' + (team.reduce(function(s,p){return s+p.rate;},0)/team.length).toFixed(0) + '</div></div>';
   }
 
@@ -1374,33 +1552,79 @@
   });
 
   /* ---------- APPROVALS ---------- */
+
+  // Mock per-person leave balances for team members other than Amara
+  // (Amara's own balance lives in the shared `balances` array from the Leave tab.)
+  var teamBalances = {
+    "Priya Nathan": {"Casual Leave":{used:2,total:12}, "Sick Leave":{used:3,total:10}, "Earned Leave":{used:4,total:18}, "Unpaid Leave":{used:0,total:5}},
+    "Noah Ibarra":  {"Casual Leave":{used:5,total:12}, "Sick Leave":{used:2,total:10}, "Earned Leave":{used:6,total:18}, "Unpaid Leave":{used:0,total:5}},
+    "Diego Santos": {"Casual Leave":{used:3,total:12}, "Sick Leave":{used:1,total:10}, "Earned Leave":{used:2,total:18}, "Unpaid Leave":{used:0,total:5}},
+    "Leah Cortez":  {"Casual Leave":{used:4,total:12}, "Sick Leave":{used:0,total:10}, "Earned Leave":{used:3,total:18}, "Unpaid Leave":{used:0,total:5}}
+  };
+
+  function getBalanceRef(name, type){
+    if(name === "Amara Mendez") return balances.find(function(b){ return b.type === type; });
+    return teamBalances[name] && teamBalances[name][type];
+  }
+
   var pendingApprovals = [
-    {id:1, name:"Priya Nathan", type:"Sick Leave", from:"Sep 3", to:"Sep 4", days:2, reason:"Recovering from flu."},
-    {id:2, name:"Noah Ibarra", type:"Earned Leave", from:"Sep 15", to:"Sep 19", days:5, reason:"Family trip planned months ago."},
-    {id:3, name:"Diego Santos", type:"Casual Leave", from:"Sep 8", to:"Sep 8", days:1, reason:"Personal errand."}
+    {id:1, kind:"leave", name:"Priya Nathan", type:"Sick Leave", from:"Sep 3", to:"Sep 4", days:2, reason:"Recovering from flu."},
+    {id:2, kind:"leave", name:"Noah Ibarra", type:"Earned Leave", from:"Sep 15", to:"Sep 19", days:5, reason:"Family trip planned months ago."},
+    {id:3, kind:"leave", name:"Diego Santos", type:"Casual Leave", from:"Sep 8", to:"Sep 8", days:1, reason:"Personal errand."},
+    {id:4, kind:"leave", name:"Leah Cortez", type:"Casual Leave", from:"Aug 20", to:"Aug 20", days:1, reason:"Doctor's appointment."}
   ];
   var decidedApprovals = [
-    {name:"Leah Cortez", type:"Casual Leave", from:"Aug 12", to:"Aug 12", days:1, status:"approved"},
-    {name:"Amara Mendez", type:"Sick Leave", from:"Jul 30", to:"Aug 1", days:3, status:"approved"}
+    {id:101, kind:"leave", name:"Leah Cortez", type:"Casual Leave", from:"Aug 12", to:"Aug 12", days:1, status:"approved"},
+    {id:102, kind:"leave", name:"Amara Mendez", type:"Sick Leave", from:"Jul 30", to:"Aug 1", days:3, status:"approved"}
   ];
 
   var approvalsList = document.getElementById("approvalsList");
   var decidedList = document.getElementById("decidedList");
   var pendingCount = document.getElementById("pendingCount");
 
-  function renderApprovals(){
-    pendingCount.textContent = pendingApprovals.length + (pendingApprovals.length === 1 ? " pending" : " pending");
+  function approvalMeta(r){
+    if(r.kind === "correction"){
+      return '<b>Attendance correction</b> · ' + r.dayLabel + ' · ' + timeLabel(r.requestedIn) + '–' + timeLabel(r.requestedOut);
+    }
+    return '<b>' + r.type + '</b> · ' + r.from + '–' + r.to + ' · ' + r.days + ' day' + (r.days===1?"":"s");
+  }
 
-    if(pendingApprovals.length === 0){
+  var MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  function parseShortDate(str){
+    var parts = str.split(" ");
+    var mi = MONTH_NAMES.indexOf(parts[0]);
+    var day = Number(parts[1]);
+    if(mi === -1 || !day) return null;
+    return new Date(new Date().getFullYear(), mi, day, 23, 59, 59);
+  }
+  function isOverdue(r){
+    if(r.kind !== "leave") return false;
+    var d = parseShortDate(r.to);
+    return d ? d.getTime() < Date.now() : false;
+  }
+
+  function pendingCorrections(){ return correctionRequests.filter(function(r){ return r.status === "pending"; }); }
+  function decidedCorrections(){ return correctionRequests.filter(function(r){ return r.status !== "pending"; }); }
+
+  function renderApprovals(){
+    var allPending = pendingApprovals.concat(pendingCorrections()).sort(function(a,b){
+      return (isOverdue(b) ? 1 : 0) - (isOverdue(a) ? 1 : 0);
+    });
+    var allDecided = decidedApprovals.concat(decidedCorrections());
+
+    pendingCount.textContent = allPending.length + " pending";
+
+    if(allPending.length === 0){
       approvalsList.innerHTML = '<div class="empty-state">No pending requests. Your team is all caught up.</div>';
     } else {
-      approvalsList.innerHTML = pendingApprovals.map(function(r){
-        return '<div class="approval-item" data-id="' + r.id + '">' +
+      approvalsList.innerHTML = allPending.map(function(r){
+        var overdueTag = isOverdue(r) ? ' <span class="badge rejected">Overdue</span>' : "";
+        return '<div class="approval-item" data-id="' + r.id + '" data-kind="' + r.kind + '">' +
           '<div class="approval-who">' +
             '<div class="avatar">' + initials(r.name) + '</div>' +
             '<div>' +
               '<div class="rname" style="font-weight:600;font-size:13.5px;">' + r.name + '</div>' +
-              '<div class="approval-meta"><b>' + r.type + '</b> · ' + r.from + '–' + r.to + ' · ' + r.days + ' day' + (r.days===1?"":"s") + '</div>' +
+              '<div class="approval-meta">' + approvalMeta(r) + overdueTag + '</div>' +
             '</div>' +
           '</div>' +
           '<div class="approval-reason">' + r.reason + '</div>' +
@@ -1413,37 +1637,87 @@
 
       approvalsList.querySelectorAll(".approval-item").forEach(function(item){
         var id = Number(item.dataset.id);
-        item.querySelector(".approve-btn").addEventListener("click", function(){ decide(id, "approved"); });
-        item.querySelector(".reject-btn").addEventListener("click", function(){ decide(id, "rejected"); });
+        var kind = item.dataset.kind;
+        item.querySelector(".approve-btn").addEventListener("click", function(){ decide(id, kind, "approved"); });
+        item.querySelector(".reject-btn").addEventListener("click", function(){ decide(id, kind, "rejected"); });
       });
     }
 
-    if(decidedApprovals.length === 0){
+    if(allDecided.length === 0){
       decidedList.innerHTML = '<div class="empty-state">Nothing decided yet.</div>';
     } else {
-      decidedList.innerHTML = decidedApprovals.map(function(r){
-        return '<div class="approval-item">' +
+      decidedList.innerHTML = allDecided.map(function(r){
+        var reverseBtn = (r.kind === "leave" && r.status === "approved")
+          ? '<button type="button" class="btn btn-ghost btn-mini reverse-btn" data-id="' + r.id + '">Reverse</button>'
+          : "";
+        return '<div class="approval-item" data-id="' + r.id + '" data-kind="' + r.kind + '">' +
           '<div class="approval-who">' +
             '<div class="avatar">' + initials(r.name) + '</div>' +
             '<div>' +
               '<div class="rname" style="font-weight:600;font-size:13.5px;">' + r.name + '</div>' +
-              '<div class="approval-meta"><b>' + r.type + '</b> · ' + r.from + '–' + r.to + ' · ' + r.days + ' day' + (r.days===1?"":"s") + '</div>' +
+              '<div class="approval-meta">' + approvalMeta(r) + '</div>' +
             '</div>' +
           '</div>' +
-          '<span class="badge ' + r.status + '">' + r.status.charAt(0).toUpperCase() + r.status.slice(1) + '</span>' +
+          '<div class="approval-actions">' +
+            '<span class="badge ' + r.status + '">' + r.status.charAt(0).toUpperCase() + r.status.slice(1) + '</span>' +
+            reverseBtn +
+          '</div>' +
         '</div>';
       }).join("");
+
+      decidedList.querySelectorAll(".reverse-btn").forEach(function(btn){
+        btn.addEventListener("click", function(){ reverseLeave(Number(btn.dataset.id)); });
+      });
     }
   }
 
-  function decide(id, status){
+  function decide(id, kind, status){
+    if(kind === "correction"){
+      var creq = correctionRequests.find(function(r){ return r.id === id; });
+      if(!creq) return;
+      creq.status = status;
+      if(status === "approved"){
+        var row = weekData.find(function(d){ return d.day === creq.dayLabel; });
+        if(row){
+          row.in = timeLabel(creq.requestedIn);
+          row.out = timeLabel(creq.requestedOut);
+          row.total = hoursBetween(creq.requestedIn, creq.requestedOut).toFixed(1) + "h";
+          row.status = "corrected";
+          renderTimesheet();
+        }
+      }
+      renderApprovals();
+      renderMyCorrections();
+      renderTeamStats();
+      showToast(status === "approved" ? "Approved " + creq.name + "'s correction." : "Rejected " + creq.name + "'s correction.");
+      return;
+    }
+
     var idx = pendingApprovals.findIndex(function(r){ return r.id === id; });
     if(idx === -1) return;
     var req = pendingApprovals.splice(idx, 1)[0];
-    decidedApprovals.unshift({name:req.name, type:req.type, from:req.from, to:req.to, days:req.days, status:status});
+
+    if(status === "approved"){
+      var balRef = getBalanceRef(req.name, req.type);
+      if(balRef) balRef.used += req.days;
+      if(req.name === "Amara Mendez") renderBalances();
+    }
+
+    decidedApprovals.unshift({id:req.id, kind:"leave", name:req.name, type:req.type, from:req.from, to:req.to, days:req.days, status:status});
     renderApprovals();
     renderTeamStats();
     showToast(status === "approved" ? "Approved " + req.name + "'s request." : "Rejected " + req.name + "'s request.");
+  }
+
+  function reverseLeave(id){
+    var item = decidedApprovals.find(function(r){ return r.id === id && r.kind === "leave" && r.status === "approved"; });
+    if(!item) return;
+    var balRef = getBalanceRef(item.name, item.type);
+    if(balRef) balRef.used = Math.max(0, balRef.used - item.days);
+    item.status = "cancelled";
+    renderApprovals();
+    if(item.name === "Amara Mendez") renderBalances();
+    showToast("Reversed " + item.name + "'s " + item.type + " — " + item.days + " day" + (item.days===1?"":"s") + " restored.");
   }
 
   renderTeamStats();
