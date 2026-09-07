@@ -6,14 +6,19 @@ Everything is in one file: `index.html` (HTML, CSS, and JS inline — no build s
 
 ## Running it
 
-Just open `index.html` in a browser, or serve the folder with any static file server:
+For local development, run the Vite development server:
 
 ```bash
-python3 -m http.server 8000
-# then visit http://localhost:8000
+npm install
+npm run dev
+# then visit the URL shown by Vite
 ```
 
-It's also ready to deploy as-is to GitHub Pages, Netlify, Vercel, etc.
+The repository includes a GitHub Actions workflow that builds and deploys the `dist` folder to GitHub Pages whenever `main` is updated. Enable GitHub Pages in the repository settings with **Source: GitHub Actions**. The project URL will be:
+
+```text
+https://regulus-j.github.io/opg-time-n-leave-tracker/
+```
 
 ## Demo logins
 
