@@ -28,6 +28,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Build
+        env:
+          VITE_BASE: /opg-time-n-leave-tracker/
         run: npm run build
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
