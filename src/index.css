@@ -8,7 +8,8 @@
   :root { --background:37 100% 98%; --foreground:20 25% 12%; --card:0 0% 100%; --primary:8 81% 51%; --primary-foreground:0 0% 100%; --secondary:37 100% 81%; --secondary-foreground:20 25% 12%; --accent:26 100% 49%; --accent-foreground:0 0% 100%; --highlight:40 93% 59%; --muted:37 100% 95%; --muted-foreground:20 10% 42%; --border:37 45% 84%; --radius:.65rem; }
   * { border-color:hsl(var(--border)); }
   body { margin:0; background:hsl(var(--background)); color:hsl(var(--foreground)); font-family:'Bricolage Grotesque'; font-variation-settings:'wdth' 92, 'opsz' 24; font-weight:400; }
-  h1, h2, h3 { font-family:'Bricolage Grotesque'; font-variation-settings:'wdth' 78, 'opsz' 72; font-weight:800; letter-spacing:-.035em; }
+  h1, h2, h3 { font-family:'Bricolage Grotesque'; font-variation-settings:'wdth' 90, 'opsz' 72; font-weight:800; letter-spacing:.008em; }
+  header h1 { letter-spacing:.02em; }
   button, input, select, textarea { font:inherit; }
 }
 
