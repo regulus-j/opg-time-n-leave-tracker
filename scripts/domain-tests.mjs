@@ -9,6 +9,14 @@ import {
   validateLeaveRequest,
   wouldCreateManagerCycle,
 } from "../src/domain/rules.js";
+import {
+  PERMISSIONS,
+  ROLES,
+  canAccessEmployee,
+  canAccessPage,
+  hasPermission,
+  scopedEmployeeIds,
+} from "../src/domain/authorization.js";
 
 assert.equal(chargeableDays("2026-09-14", "2026-09-15", []), 2);
 assert.equal(
@@ -129,4 +137,38 @@ assert.equal(
   true,
 );
 assert.equal(csvEscape("=SUM(A1:A2)"), '"\'=SUM(A1:A2)"');
+const accessPeople = [
+  { id: "employee", managerId: "manager", status: "active" },
+  { id: "other", managerId: "someone-else", status: "active" },
+  { id: "manager", managerId: "hr", status: "active" },
+  { id: "inactive", managerId: null, status: "inactive" },
+];
+assert.equal(hasPermission(ROLES.EMPLOYEE, PERMISSIONS.MANAGE_TENANT), false);
+assert.equal(hasPermission(ROLES.HR_ADMIN, PERMISSIONS.MANAGE_TENANT), true);
+assert.equal(canAccessPage(ROLES.EMPLOYEE, "Reports"), false);
+assert.equal(canAccessPage(ROLES.HR_ADMIN, "Reports"), true);
+assert.equal(canAccessPage(ROLES.HR_ADMIN, "Attendance"), true);
+assert.equal(canAccessPage(ROLES.HR_ADMIN, "TeamDashboard"), true);
+assert.equal(canAccessPage(ROLES.HR_ADMIN, "OrganizationOverview"), true);
+assert.equal(hasPermission(ROLES.PLATFORM_ADMIN, PERMISSIONS.MANAGE_ORGANIZATIONS), true);
+assert.equal(canAccessPage(ROLES.PLATFORM_ADMIN, "PlatformOverview", "global"), true);
+assert.equal(canAccessPage(ROLES.PLATFORM_ADMIN, "Reports", "global"), false);
+assert.equal(canAccessPage(ROLES.PLATFORM_ADMIN, "Reports", "tenant"), true);
+assert.deepEqual(
+  scopedEmployeeIds({ people: accessPeople }, "hr", ROLES.HR_ADMIN),
+  ["employee", "other", "manager"],
+);
+assert.deepEqual(
+  scopedEmployeeIds({ people: accessPeople }, "manager", ROLES.MANAGER),
+  ["employee"],
+);
+assert.equal(
+  canAccessEmployee(
+    { people: accessPeople },
+    "manager",
+    ROLES.MANAGER,
+    "other",
+  ),
+  false,
+);
 console.log("domain rules: all assertions passed");

@@ -1,9 +1,7 @@
-import { chromium } from 'playwright-core'
-const browser = await chromium.launch({ headless: true, executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' })
+import { launchAuditBrowser, resetPage } from './audit-config.mjs'
+const browser = await launchAuditBrowser()
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
-await page.goto('http://127.0.0.1:8000/', { waitUntil: 'domcontentloaded', timeout: 15000 })
-await page.evaluate(() => localStorage.clear())
-await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 })
+await resetPage(page)
 await page.getByLabel('Email').fill('hr@tracker.demo')
 await page.getByLabel('Password').fill('hr2026')
 await page.getByRole('button', { name: 'Sign in' }).click()

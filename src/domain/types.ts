@@ -1,9 +1,10 @@
-export type Role = 'Employee' | 'Reporting Manager' | 'HR Admin'
+export type Role = 'Employee' | 'Reporting Manager' | 'HR Admin' | 'Platform Admin'
 export type RequestStatus = 'draft' | 'pending' | 'approved' | 'rejected' | 'withdrawn' | 'cancelled'
 export type AttendanceStatus = 'complete' | 'below_standard' | 'missing_punch' | 'absent' | 'leave' | 'holiday' | 'non_working' | 'future' | 'pending_adjustment'
 
-export interface Tenant { tenant_id: string; name: string; timezone: string; week_start: number; locale: string }
-export interface User { user_id: string; tenant_id: string; employee_id: string; display_name: string; email: string; capabilities: Role[]; status: 'active' | 'inactive' }
+export interface Tenant { tenant_id: string; name: string; timezone: string; week_start: number; locale: string; status: 'active' | 'suspended'; created_at: string }
+export interface TenantMembership { tenant_id: string; employee_id: string; roles: Role[]; status: 'active' | 'inactive' }
+export interface User { user_id: string; display_name: string; email: string; memberships: TenantMembership[]; platform_admin?: boolean; status: 'active' | 'inactive' }
 export interface JobProfile { job_id: string; tenant_id: string; title: string; department_id: string; standard_daily_mins: number; standard_weekly_mins: number; is_ot_eligible: boolean; max_daily_mins: number | null; effective_from: string; effective_to?: string | null; status: 'active' | 'inactive' }
 export interface Employee { employee_id: string; tenant_id: string; employee_number: string; name: string; job_id: string; manager_id: string | null; department_id: string; status: 'active' | 'inactive' }
 export interface AttendanceSession { session_id: string; tenant_id: string; employee_id: string; clock_in_at: string; clock_out_at: string | null; status: 'open' | 'closed' | 'voided' }
