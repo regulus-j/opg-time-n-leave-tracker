@@ -39,25 +39,72 @@ import {
   validateLeaveRequest,
   wouldCreateManagerCycle,
 } from "./domain/rules";
+import {
+  ROLES,
+  activeMembership,
+  availableRoles,
+  canAccessPage,
+  isAssignedRole,
+  scopedEmployeeIds,
+} from "./domain/authorization";
 
 const DEMO_USERS = {
   "employee@tracker.demo": {
     password: "employee2026",
     name: "Alex Morgan",
-    employeeId: "alex",
-    role: "Employee",
+    memberships: [
+      { tenantId: "tenant-main", employeeId: "alex", roles: [ROLES.EMPLOYEE] },
+    ],
   },
   "manager@tracker.demo": {
     password: "manager2026",
     name: "Jamie Chen",
-    employeeId: "jamie",
-    role: "Reporting Manager",
+    memberships: [
+      {
+        tenantId: "tenant-main",
+        employeeId: "jamie",
+        roles: [ROLES.EMPLOYEE, ROLES.MANAGER],
+      },
+    ],
   },
   "hr@tracker.demo": {
     password: "hr2026",
     name: "Maya Patel",
-    employeeId: "maya",
-    role: "HR Admin",
+    memberships: [
+      {
+        tenantId: "tenant-main",
+        employeeId: "maya",
+        roles: [ROLES.EMPLOYEE, ROLES.HR_ADMIN],
+      },
+    ],
+  },
+  "admin@platform.demo": {
+    password: "platform2026",
+    name: "Maya Patel",
+    platformAdmin: true,
+    memberships: [
+      {
+        tenantId: "tenant-main",
+        employeeId: "maya",
+        roles: [ROLES.EMPLOYEE, ROLES.HR_ADMIN],
+      },
+      {
+        tenantId: "tenant-harbor",
+        employeeId: "maya",
+        roles: [ROLES.EMPLOYEE, ROLES.HR_ADMIN],
+      },
+    ],
+  },
+  "hr@harbor.demo": {
+    password: "harbor2026",
+    name: "Maya Patel",
+    memberships: [
+      {
+        tenantId: "tenant-harbor",
+        employeeId: "maya",
+        roles: [ROLES.EMPLOYEE, ROLES.HR_ADMIN],
+      },
+    ],
   },
 };
 const seed = {
@@ -324,6 +371,79 @@ const seed = {
   audit: [],
 };
 const clone = (value) => JSON.parse(JSON.stringify(value));
+const TENANTS = {
+  "tenant-main": {
+    id: "tenant-main",
+    name: "Northstar Operations",
+    timezone: "Asia/Singapore",
+    weekStart: 1,
+  },
+  "tenant-harbor": {
+    id: "tenant-harbor",
+    name: "Harbor Logistics",
+    timezone: "Asia/Manila",
+    weekStart: 1,
+  },
+};
+const TENANT_CATALOG_KEY = "tlt-tenant-catalog-v1";
+const tenantCatalogSeed = () =>
+  Object.values(TENANTS).map((tenant) => ({
+    ...tenant,
+    status: tenant.status || "active",
+    createdAt: tenant.createdAt || "2026-01-01",
+  }));
+const loadTenantCatalog = () => {
+  try {
+    const stored = JSON.parse(
+      localStorage.getItem(TENANT_CATALOG_KEY) || "null",
+    );
+    if (!Array.isArray(stored) || !stored.length) return tenantCatalogSeed();
+    stored.forEach((tenant) => {
+      TENANTS[tenant.id] = { ...TENANTS[tenant.id], ...tenant };
+    });
+    return stored;
+  } catch {
+    return tenantCatalogSeed();
+  }
+};
+const saveTenantCatalog = (catalog) =>
+  localStorage.setItem(TENANT_CATALOG_KEY, JSON.stringify(catalog));
+const TENANT_ENTITY_COLLECTIONS = [
+  "people",
+  "jobs",
+  "leaveTypes",
+  "policies",
+  "attendance",
+  "leave",
+  "adjustments",
+  "holidays",
+  "audit",
+];
+const tenantize = (source, tenantId) => {
+  const next = clone(source);
+  next.tenant = { ...TENANTS[tenantId] };
+  TENANT_ENTITY_COLLECTIONS.forEach((key) => {
+    next[key] = (next[key] || []).map((item) => ({ ...item, tenantId }));
+  });
+  next.balances = Object.fromEntries(
+    Object.entries(next.balances || {}).map(([employeeId, balances]) => [
+      employeeId,
+      Object.fromEntries(
+        Object.entries(balances).map(([typeId, balance]) => [
+          typeId,
+          { ...balance, tenantId },
+        ]),
+      ),
+    ]),
+  );
+  return next;
+};
+const TENANT_SEEDS = Object.freeze({
+  "tenant-main": tenantize(seed, "tenant-main"),
+  "tenant-harbor": tenantize(seed, "tenant-harbor"),
+});
+const getTenantSeed = (tenantId) =>
+  tenantize(TENANT_SEEDS[tenantId] || TENANT_SEEDS["tenant-main"], tenantId);
 const today = "2026-09-15";
 const fmt = (date) =>
   new Date(`${date}T00:00:00`).toLocaleDateString("en-US", {
@@ -344,30 +464,47 @@ const initials = (name) =>
     .map((x) => x[0])
     .join("")
     .slice(0, 2);
-const saveData = (data) =>
-  localStorage.setItem("tlt-data-v1:tenant-main", JSON.stringify(data));
-const loadData = () => {
+const tenantStorageKey = (tenantId) => `tlt-data-v1:${tenantId}`;
+const saveData = (tenantId, data) =>
+  localStorage.setItem(tenantStorageKey(tenantId), JSON.stringify(data));
+const loadData = (tenantId) => {
   try {
     const value = JSON.parse(
-      localStorage.getItem("tlt-data-v1:tenant-main") || "null",
+      localStorage.getItem(tenantStorageKey(tenantId)) || "null",
     );
-    return value?.people && value?.tenant?.id === seed.tenant.id
-      ? value
-      : clone(seed);
+    return value?.people && value?.tenant?.id === tenantId
+      ? tenantize(value, tenantId)
+      : getTenantSeed(tenantId);
   } catch {
-    return clone(seed);
+    return getTenantSeed(tenantId);
   }
+};
+const PLATFORM_AUDIT_KEY = "tlt-platform-audit-v1";
+const loadPlatformAudit = () => {
+  try {
+    const value = JSON.parse(localStorage.getItem(PLATFORM_AUDIT_KEY) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+};
+const appendPlatformAudit = (event) => {
+  const next = [...loadPlatformAudit(), { id: `platform-${Date.now()}`, at: new Date().toISOString(), ...event }];
+  localStorage.setItem(PLATFORM_AUDIT_KEY, JSON.stringify(next));
+  return next;
 };
 const typeName = (data, id) =>
   data.leaveTypes.find((x) => x.id === id)?.name || id;
 const directReports = (data, id) =>
   data.people.filter((p) => p.managerId === id);
-const isHR = (role) => role === "HR Admin";
+const isHR = (role) => role === ROLES.HR_ADMIN;
 
 function AuthScreen({ onLogin }) {
   const [mode, setMode] = useState("login");
+  const [tenantId, setTenantId] = useState("tenant-main");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [pendingUser, setPendingUser] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const submit = (e) => {
@@ -384,12 +521,40 @@ function AuthScreen({ onLogin }) {
       setMessage("Password updated. Sign in with your new password.");
       return;
     }
+    const completeLogin = (user, selectedTenantId) => {
+      const membership = user.memberships.find(
+        (item) => item.tenantId === selectedTenantId,
+      ) || user.memberships[0];
+      if (!membership)
+        return setError("This account does not have access to that organization.");
+      if (TENANTS[membership.tenantId]?.status === "suspended")
+        return setError("This organization is currently suspended.");
+      const scopedUser = {
+        email: email.trim().toLowerCase(),
+        name: user.name,
+        platformAdmin: Boolean(user.platformAdmin),
+        memberships: user.memberships,
+        tenantId: user.platformAdmin ? null : membership.tenantId,
+        employeeId: membership.employeeId,
+        role: user.platformAdmin ? ROLES.PLATFORM_ADMIN : membership.roles.at(-1),
+      };
+      localStorage.setItem("tlt-session-v1", JSON.stringify(scopedUser));
+      onLogin(scopedUser);
+    };
+    if (mode === "organization") {
+      if (pendingUser) completeLogin(pendingUser, tenantId);
+      return;
+    }
     const user = DEMO_USERS[email.trim().toLowerCase()];
     if (!user || user.password !== password)
       return setError("We could not sign you in with those details.");
-    const scopedUser = { ...user, tenantId: seed.tenant.id };
-    localStorage.setItem("tlt-session-v1", JSON.stringify(scopedUser));
-    onLogin(scopedUser);
+    if (user.memberships.length > 1 && !user.platformAdmin) {
+      setPendingUser(user);
+      setTenantId(user.memberships[0].tenantId);
+      setMode("organization");
+      return;
+    }
+    completeLogin(user, user.memberships[0].tenantId);
   };
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
@@ -409,6 +574,8 @@ function AuthScreen({ onLogin }) {
           <CardTitle>
             {mode === "login"
               ? "Welcome back"
+              : mode === "organization"
+                ? "Choose your organization"
               : mode === "forgot"
                 ? "Reset your password"
                 : "Choose a new password"}
@@ -416,7 +583,24 @@ function AuthScreen({ onLogin }) {
         </CardHeader>
         <CardContent>
           <form onSubmit={submit} className="space-y-4">
-            {mode !== "reset" && (
+            {mode === "organization" && pendingUser && (
+              <label className="block text-sm font-medium">
+                Organization
+                <select
+                  aria-label="Organization"
+                  value={tenantId}
+                  onChange={(e) => setTenantId(e.target.value)}
+                  className="mt-2 h-11 w-full rounded-md border bg-background px-3"
+                >
+                  {pendingUser.memberships.map((membership) => (
+                    <option key={membership.tenantId} value={membership.tenantId}>
+                      {TENANTS[membership.tenantId].name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {(mode === "login" || mode === "forgot") && (
               <label className="block text-sm font-medium">
                 Email
                 <input
@@ -430,7 +614,7 @@ function AuthScreen({ onLogin }) {
                 />
               </label>
             )}
-            {mode !== "forgot" && (
+            {(mode === "login" || mode === "reset") && (
               <label className="block text-sm font-medium">
                 Password
                 <input
@@ -463,14 +647,16 @@ function AuthScreen({ onLogin }) {
               </p>
             )}
             <Button className="h-11 w-full">
-              {mode === "login"
+              {mode === "organization"
+                ? "Continue"
+                : mode === "login"
                 ? "Sign in"
                 : mode === "forgot"
                   ? "Send reset instructions"
                   : "Update password"}
             </Button>
           </form>
-          <div className="mt-5 flex justify-between text-sm">
+          {mode !== "organization" ? <div className="mt-5 flex justify-between text-sm">
             <button
               className="text-primary underline"
               type="button"
@@ -491,12 +677,26 @@ function AuthScreen({ onLogin }) {
                 Use reset code
               </button>
             )}
-          </div>
+          </div> : (
+            <button
+              className="mt-5 text-sm text-primary underline"
+              type="button"
+              onClick={() => {
+                setPendingUser(null);
+                setMode("login");
+                setError("");
+              }}
+            >
+              Back to sign in
+            </button>
+          )}
           <div className="mt-6 rounded-md border bg-muted/50 p-3 text-xs text-muted-foreground">
             <b className="text-foreground">Demo accounts</b>
             <p>employee@tracker.demo / employee2026</p>
             <p>manager@tracker.demo / manager2026</p>
             <p>hr@tracker.demo / hr2026</p>
+            <p>hr@harbor.demo / harbor2026</p>
+            <p>admin@platform.demo / platform2026 (both organizations)</p>
           </div>
         </CardContent>
       </Card>
@@ -504,12 +704,28 @@ function AuthScreen({ onLogin }) {
   );
 }
 
-function Header({ user, role, setRole, onSignOut, onReset }) {
+function Header({
+  user,
+  tenant,
+  role,
+  roles,
+  platformGlobal,
+  setRole,
+  onTenantChange,
+  onExitTenant,
+  onSignOut,
+  onReset,
+  onMenu,
+}) {
   return (
     <header className="flex min-h-16 items-center justify-between gap-3 border-b bg-background px-4 py-3 md:px-8">
-      <div>
+      <div className="flex min-w-0 items-center gap-3">
+        <Button variant="outline" size="icon" className="shrink-0 md:hidden" title="Open navigation" aria-label="Open navigation" onClick={onMenu}>
+          <Menu className="h-4 w-4" />
+        </Button>
+        <div>
         <p className="text-xs text-muted-foreground">
-          {seed.tenant.name} · {seed.tenant.timezone}
+          {tenant.name} · {tenant.timezone}
         </p>
         <h1 className="font-semibold">
           Good morning, {user.name.split(" ")[0]}
@@ -517,26 +733,48 @@ function Header({ user, role, setRole, onSignOut, onReset }) {
         <p className="text-[10px] font-medium uppercase tracking-wide text-amber-700">
           Prototype · mock data only
         </p>
+        </div>
       </div>
       <div className="flex items-center gap-2">
+        {!platformGlobal && !user.platformAdmin && user.memberships.length > 1 && (
+          <select
+            aria-label="Current organization"
+            value={tenant.id}
+            onChange={(e) => onTenantChange(e.target.value)}
+            className="h-10 rounded-md border bg-background px-2 text-xs font-medium"
+          >
+            {user.memberships.map((membership) => (
+              <option key={membership.tenantId} value={membership.tenantId}>
+                {TENANTS[membership.tenantId].name}
+              </option>
+            ))}
+          </select>
+        )}
         <select
           aria-label="Current workspace"
           value={role}
           onChange={(e) => setRole(e.target.value)}
           className="h-10 rounded-md border bg-background px-2 text-xs font-medium"
         >
-          <option>Employee</option>
-          <option>Reporting Manager</option>
-          <option>HR Admin</option>
+          {roles.map((assignedRole) => (
+            <option key={assignedRole}>{assignedRole}</option>
+          ))}
         </select>
-        <Button
-          variant="outline"
-          size="icon"
-          title="Reset demo data"
-          onClick={onReset}
-        >
-          <Settings2 className="h-4 w-4" />
-        </Button>
+        {!platformGlobal && user.platformAdmin && (
+          <Button variant="outline" size="sm" onClick={onExitTenant}>
+            Exit organization
+          </Button>
+        )}
+        {!platformGlobal && (
+          <Button
+            variant="outline"
+            size="icon"
+            title="Reset demo data"
+            onClick={onReset}
+          >
+            <Settings2 className="h-4 w-4" />
+          </Button>
+        )}
         <Button
           variant="outline"
           size="icon"
@@ -549,7 +787,7 @@ function Header({ user, role, setRole, onSignOut, onReset }) {
     </header>
   );
 }
-function SideNav({ role, page, go, team }) {
+function SideNav({ role, page, go, team, platformGlobal }) {
   const employee = [
     ["Dashboard", "Dashboard"],
     ["My Attendance", "Attendance"],
@@ -564,57 +802,89 @@ function SideNav({ role, page, go, team }) {
     ["Team Leave Calendar", "TeamCalendar"],
     ["Overtime & Alerts", "Alerts"],
   ];
-  const hr = [
-    ["Organization Dashboard", "Dashboard"],
-    ["Job Profiles", "Jobs"],
-    ["Leave Policy Mapping", "Policies"],
-    ["Directory", "Directory"],
-    ["Overrides", "Overrides"],
-    ["Approvals", "Approvals"],
-    ["Master Reports", "Reports"],
-    ["Holidays", "Holidays"],
+  const hrGroups = [
+    {
+      label: "My workspace",
+      items: [
+        ["My Action Dashboard", "Dashboard"],
+        ["My Attendance", "Attendance"],
+        ["Leave", "Leave"],
+        ["Holiday Calendar", "Holidays"],
+        ["Profile", "Profile"],
+      ],
+    },
+    {
+      label: "Team",
+      items: [
+        ["Team Dashboard", "TeamDashboard"],
+        ["Approvals", "Approvals"],
+        ["Who's In", "WhosIn"],
+        ["Team Leave Calendar", "TeamCalendar"],
+        ["Overtime & Alerts", "Alerts"],
+      ],
+    },
+    {
+      label: "Administration",
+      items: [
+        ["Organization Overview", "OrganizationOverview"],
+        ["Job Profiles", "Jobs"],
+        ["Leave Policy Mapping", "Policies"],
+        ["Directory", "Directory"],
+        ["Overrides", "Overrides"],
+        ["Master Reports", "Reports"],
+      ],
+    },
   ];
-  const items =
-    role === "HR Admin"
-      ? hr
-      : role === "Reporting Manager" && team
-        ? manager
-        : employee;
+  const platform = [
+    ["Global Overview", "PlatformOverview"],
+    ["Organizations", "Organizations"],
+    ["Access & Roles", "Access"],
+    ["Audit Log", "PlatformAudit"],
+    ["System Settings", "SystemSettings"],
+  ];
+  const groups = platformGlobal
+    ? [{ label: null, items: platform }]
+    : role === "HR Admin"
+      ? hrGroups
+      : [{ label: null, items: role === "Reporting Manager" && team ? manager : employee }];
   return (
     <nav className="space-y-1 p-4">
       <div className="mb-4 flex items-center gap-2 px-2">
         <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary font-bold text-primary-foreground">
           T
         </div>
-        <b>Time & Leave</b>
+        <b>{platformGlobal ? "Platform Admin" : "Time & Leave"}</b>
       </div>
       <p className="mb-2 px-2 text-xs text-muted-foreground">
-        {role}
+        {platformGlobal ? "Global control plane" : role}
         {role === "Reporting Manager" && ` · ${team ? "Team" : "Myself"}`}
       </p>
-      {items.map(([label, value]) => (
-        <Button
-          key={value}
-          title={`Open ${label}`}
-          variant={page === value ? "secondary" : "ghost"}
-          className="w-full justify-start"
-          onClick={() => go(value)}
-        >
-          {label === "Dashboard" ? (
-            <Clock3 className="mr-2 h-4 w-4" />
-          ) : label === "Approvals" ? (
-            <Check className="mr-2 h-4 w-4" />
-          ) : label.includes("Calendar") ||
-            label === "Leave" ||
-            label === "Holidays" ? (
-            <CalendarDays className="mr-2 h-4 w-4" />
-          ) : label === "Directory" || label === "Who's In" ? (
-            <Users className="mr-2 h-4 w-4" />
-          ) : (
-            <FileText className="mr-2 h-4 w-4" />
-          )}
-          {label}
-        </Button>
+      {groups.map((group) => (
+        <div key={group.label || "main"} className="space-y-1">
+          {group.label && <p className="px-2 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{group.label}</p>}
+          {group.items.map(([label, value]) => (
+            <Button
+              key={value}
+              title={`Open ${label}`}
+              variant={page === value ? "secondary" : "ghost"}
+              className="w-full justify-start"
+              onClick={() => go(value)}
+            >
+              {label === "Dashboard" || label === "My Action Dashboard" || label === "Team Dashboard" ? (
+                <Clock3 className="mr-2 h-4 w-4" />
+              ) : label === "Approvals" ? (
+                <Check className="mr-2 h-4 w-4" />
+              ) : label.includes("Calendar") || label === "Leave" || label === "Holidays" ? (
+                <CalendarDays className="mr-2 h-4 w-4" />
+              ) : label === "Directory" || label === "Who's In" ? (
+                <Users className="mr-2 h-4 w-4" />
+              ) : (
+                <FileText className="mr-2 h-4 w-4" />
+              )}
+              {label}
+            </Button>
+          ))}
+        </div>
       ))}
     </nav>
   );
@@ -622,26 +892,59 @@ function SideNav({ role, page, go, team }) {
 const Shell = ({
   children,
   user,
+  tenant,
   role,
+  roles,
+  platformGlobal,
   setRole,
+  onTenantChange,
+  onExitTenant,
   team,
   setTeam,
   page,
   go,
   onSignOut,
   onReset,
-}) => (
+}) => {
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [menuOpen]);
+  const navigateFromMenu = (next) => {
+    go(next);
+    setMenuOpen(false);
+  };
+  return (
   <div className="min-h-screen">
-    <aside className="fixed inset-y-0 hidden w-64 border-r bg-background md:block">
-      <SideNav role={role} page={page} go={go} team={team} />
+    <aside className="fixed inset-y-0 hidden w-64 overflow-y-auto border-r bg-background md:block">
+       <SideNav role={role} page={page} go={go} team={team} platformGlobal={platformGlobal} />
     </aside>
-    <main className="md:pl-64">
+    {menuOpen && (
+      <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true" aria-label="Mobile navigation">
+        <button className="absolute inset-0 h-full w-full bg-black/40" aria-label="Close navigation" onClick={() => setMenuOpen(false)} />
+        <aside className="relative h-full w-72 max-w-[85vw] overflow-y-auto border-r bg-background shadow-xl">
+          <SideNav role={role} page={page} go={navigateFromMenu} team={team} platformGlobal={platformGlobal} />
+        </aside>
+      </div>
+    )}
+    <main className="min-w-0 md:pl-64">
       <Header
         user={user}
+        tenant={tenant}
         role={role}
+        roles={roles}
+        platformGlobal={platformGlobal}
         setRole={setRole}
+        onTenantChange={onTenantChange}
+        onExitTenant={onExitTenant}
         onSignOut={onSignOut}
         onReset={onReset}
+        onMenu={() => setMenuOpen(true)}
       />
       {role === "Reporting Manager" && (
         <div className="border-b bg-muted/30 px-4 py-2 md:px-8">
@@ -672,7 +975,8 @@ const Shell = ({
       <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-8">{children}</div>
     </main>
   </div>
-);
+  );
+};
 const Head = ({ title, desc, action }) => (
   <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
     <div>
@@ -680,6 +984,17 @@ const Head = ({ title, desc, action }) => (
       <p className="mt-1 text-sm text-muted-foreground">{desc}</p>
     </div>
     {action}
+  </div>
+);
+const CollectionToolbar = ({ search, onSearch, placeholder = "Search", children }) => (
+  <div className="flex flex-col gap-3 rounded-md border bg-muted/20 p-3 md:flex-row md:flex-wrap md:items-center">
+    {onSearch && (
+      <div className="relative min-w-0 flex-1">
+        <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+        <input aria-label={placeholder} placeholder={placeholder} value={search} onChange={(e) => onSearch(e.target.value)} className="h-10 w-full rounded-md border bg-background pl-9 pr-3" />
+      </div>
+    )}
+    {children}
   </div>
 );
 const Empty = ({ text }) => (
@@ -728,13 +1043,13 @@ function EmployeeDashboard({ data, person, running, setRunning, onNavigate }) {
       <Card className="overflow-hidden bg-primary text-primary-foreground">
         <div className="grid gap-6 p-6 md:grid-cols-[1.35fr_1fr] md:p-8">
           <div>
-            <p className="text-sm text-primary-foreground/75">
+            <p className="text-sm text-primary-foreground">
               Personal workspace
             </p>
             <h3 className="mt-2 text-3xl font-semibold">
               Make your time count.
             </h3>
-            <p className="mt-2 max-w-lg text-sm text-primary-foreground/80">
+            <p className="mt-2 max-w-lg text-sm text-primary-foreground">
               Clock your work and stay ahead of exceptions before they become a
               problem.
             </p>
@@ -869,8 +1184,60 @@ function EmployeeDashboard({ data, person, running, setRunning, onNavigate }) {
   );
 }
 
+function TeamDashboard({ data, scope, onNavigate }) {
+  const people = data.people.filter((person) => scope.includes(person.id));
+  const pending =
+    data.leave.filter((item) => scope.includes(item.employeeId) && item.status === "pending").length +
+    data.adjustments.filter((item) => scope.includes(item.employeeId) && item.status === "pending").length;
+  const exceptions = data.attendance.filter(
+    (item) => scope.includes(item.employeeId) && !["complete", "future", "holiday", "leave"].includes(item.status),
+  ).length;
+  return (
+    <>
+      <Head title="Team command center" desc="Coverage, approvals, and workload signals for your team." />
+      <div className="grid gap-4 md:grid-cols-4">
+        <Metric label="Team members" value={people.length} detail="Active tenant employees" />
+        <Metric label="Pending approvals" value={pending} detail="Needs review" />
+        <Metric label="Attendance exceptions" value={exceptions} detail="Requires attention" />
+        <Metric label="Coverage" value="92%" detail="Scheduled availability" />
+      </div>
+      <Card>
+        <CardHeader><CardTitle>Team actions</CardTitle><CardDescription>Review team activity without changing employee clock sessions.</CardDescription></CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-3">
+          <Button variant="outline" onClick={() => onNavigate("Approvals")}>Review approvals</Button>
+          <Button variant="outline" onClick={() => onNavigate("WhosIn")}>Who's In</Button>
+          <Button variant="outline" onClick={() => onNavigate("TeamCalendar")}>Team leave calendar</Button>
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function OrganizationOverview({ data, onNavigate }) {
+  return (
+    <>
+      <Head title="Organization overview" desc="Tenant administration, compliance, and workforce visibility." />
+      <div className="grid gap-4 md:grid-cols-4">
+        <Metric label="People" value={data.people.filter((person) => person.status === "active").length} detail="Active directory" />
+        <Metric label="Jobs" value={data.jobs.length} detail="Configured profiles" />
+        <Metric label="Leave requests" value={data.leave.length} detail="All statuses" />
+        <Metric label="Audit events" value={data.audit.length} detail="Recorded actions" />
+      </div>
+      <Card>
+        <CardHeader><CardTitle>Admin workspace</CardTitle></CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-3">
+          <Button variant="outline" onClick={() => onNavigate("Jobs")}>Jobs & policies</Button>
+          <Button variant="outline" onClick={() => onNavigate("Directory")}>Directory</Button>
+          <Button variant="outline" onClick={() => onNavigate("Reports")}>Master reports</Button>
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
 function Attendance({ data, person, setData, notify }) {
   const [monthOffset, setMonthOffset] = useState(0);
+  const [statusFilter, setStatusFilter] = useState("all");
   const monthDate = new Date(Date.UTC(2026, 8 + monthOffset, 1));
   const month = monthDate.toLocaleDateString("en", {
     month: "long",
@@ -889,6 +1256,10 @@ function Attendance({ data, person, setData, notify }) {
     reason: "",
   });
   const rows = data.attendance.filter((x) => x.employeeId === person.id);
+  const attendanceItems = [
+    ...rows,
+    ...(monthKey === "2026-09" ? [{ id: "empty", date: "2026-09-11", status: "below_standard", minutes: 360, start: "10:00", end: "16:00" }] : []),
+  ].filter((row) => statusFilter === "all" || row.status === statusFilter);
   const submit = (e) => {
     e.preventDefault();
     if (
@@ -942,6 +1313,11 @@ function Attendance({ data, person, setData, notify }) {
           Next month
         </Button>
       </div>
+      <CollectionToolbar>
+        <select aria-label="Attendance status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-10 rounded-md border bg-background px-3">
+          <option value="all">All statuses</option><option value="complete">Complete</option><option value="missing_punch">Missing punch</option><option value="below_standard">Below standard</option><option value="absent">Absent</option>
+        </select>
+      </CollectionToolbar>
       <Card>
         <CardHeader>
           <CardTitle>Attendance calendar</CardTitle>
@@ -984,21 +1360,7 @@ function Attendance({ data, person, setData, notify }) {
               );
             })}
           </div>
-          {[
-            ...rows,
-            ...(monthKey === "2026-09"
-              ? [
-                  {
-                    id: "empty",
-                    date: "2026-09-11",
-                    status: "below_standard",
-                    minutes: 360,
-                    start: "10:00",
-                    end: "16:00",
-                  },
-                ]
-              : []),
-          ].map((row) => (
+          {attendanceItems.length ? attendanceItems.map((row) => (
             <div
               key={row.id}
               className={`flex flex-col gap-3 rounded-md border p-4 md:flex-row md:items-center md:justify-between ${row.status !== "complete" ? "border-red-300 bg-red-50" : ""}`}
@@ -1037,7 +1399,7 @@ function Attendance({ data, person, setData, notify }) {
                 )}
               </div>
             </div>
-          ))}
+          )) : <Empty text="No attendance records match the selected status." />}
         </CardContent>
       </Card>
       {open && (
@@ -1098,6 +1460,10 @@ function Attendance({ data, person, setData, notify }) {
 
 function Leave({ data, person, setData, notify }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [fromFilter, setFromFilter] = useState("");
+  const [toFilter, setToFilter] = useState("");
   const [form, setForm] = useState({
     type: "vacation",
     from: "",
@@ -1111,6 +1477,10 @@ function Leave({ data, person, setData, notify }) {
   const days = chargeableDays(form.from, form.to, data.holidays);
   const requiresDoc =
     selected?.documentationAfter && days > selected.documentationAfter;
+  const history = data.leave.filter((x) => x.employeeId === person.id).filter((item) => {
+    const haystack = `${typeName(data, item.type)} ${item.reason || ""} ${item.attachment || ""}`.toLowerCase();
+    return haystack.includes(query.toLowerCase()) && (statusFilter === "all" || item.status === statusFilter) && (!fromFilter || item.to >= fromFilter) && (!toFilter || item.from <= toFilter);
+  });
   const submit = (e) => {
     e.preventDefault();
     const validation = validateLeaveRequest({
@@ -1195,10 +1565,15 @@ function Leave({ data, person, setData, notify }) {
         <CardHeader>
           <CardTitle>Request history</CardTitle>
         </CardHeader>
+        <CardContent className="pb-0">
+          <CollectionToolbar search={query} onSearch={setQuery} placeholder="Search leave history">
+            <select aria-label="Leave status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-10 rounded-md border bg-background px-3"><option value="all">All statuses</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select>
+            <input aria-label="Leave history from date" type="date" value={fromFilter} onChange={(e) => setFromFilter(e.target.value)} className="h-10 rounded-md border px-3" />
+            <input aria-label="Leave history to date" type="date" value={toFilter} onChange={(e) => setToFilter(e.target.value)} className="h-10 rounded-md border px-3" />
+          </CollectionToolbar>
+        </CardContent>
         <CardContent className="space-y-3">
-          {data.leave
-            .filter((x) => x.employeeId === person.id)
-            .map((item) => (
+          {history.length ? history.map((item) => (
               <div
                 key={item.id}
                 className="flex flex-col gap-2 rounded-md border p-4 md:flex-row md:items-center md:justify-between"
@@ -1225,7 +1600,7 @@ function Leave({ data, person, setData, notify }) {
                   {item.status}
                 </Status>
               </div>
-            ))}
+            )) : <Empty text="No leave requests match the selected filters." />}
         </CardContent>
       </Card>
       {open && (
@@ -1306,7 +1681,13 @@ function Leave({ data, person, setData, notify }) {
 
 function Holidays({ data, hr = false, setData, notify }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [form, setForm] = useState({ date: "", name: "" });
+  const holidays = data.holidays
+    .filter((holiday) => hr || holiday.active !== false)
+    .filter((holiday) => holiday.name.toLowerCase().includes(query.toLowerCase()) && (statusFilter === "all" || (holiday.active === false ? "inactive" : "active") === statusFilter))
+    .sort((a, b) => a.date.localeCompare(b.date));
   const add = (e) => {
     e.preventDefault();
     if (!form.date || !form.name) return;
@@ -1352,16 +1733,18 @@ function Holidays({ data, hr = false, setData, notify }) {
       />
       <Card>
         <CardHeader>
-          <CardTitle>Northstar holiday calendar</CardTitle>
+          <CardTitle>{data.tenant.name} holiday calendar</CardTitle>
           <CardDescription>
             Applicable public holidays in the tenant time zone.
           </CardDescription>
         </CardHeader>
+        <CardContent className="pb-0">
+          <CollectionToolbar search={query} onSearch={setQuery} placeholder="Search holidays">
+            {hr && <select aria-label="Holiday status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-10 rounded-md border bg-background px-3"><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select>}
+          </CollectionToolbar>
+        </CardContent>
         <CardContent className="grid gap-3 md:grid-cols-2">
-          {data.holidays
-            .filter((holiday) => hr || holiday.active !== false)
-            .sort((a, b) => a.date.localeCompare(b.date))
-            .map((h) => (
+          {holidays.length ? holidays.map((h) => (
               <div
                 className="flex items-center justify-between rounded-md border p-4"
                 key={h.id}
@@ -1396,7 +1779,7 @@ function Holidays({ data, hr = false, setData, notify }) {
                   <Status tone="secondary">{h.type}</Status>
                 )}
               </div>
-            ))}
+            )) : <Empty text="No holidays match the selected filters." />}
         </CardContent>
       </Card>
       {open && (
@@ -1426,6 +1809,9 @@ function Holidays({ data, hr = false, setData, notify }) {
 
 function Approvals({ data, scope, setData, notify }) {
   const [filter, setFilter] = useState("all");
+  const [query, setQuery] = useState("");
+  const [fromFilter, setFromFilter] = useState("");
+  const [toFilter, setToFilter] = useState("");
   const [note, setNote] = useState("");
   const reports = data.people.filter((p) => scope.includes(p.id));
   const rows = [
@@ -1441,7 +1827,11 @@ function Approvals({ data, scope, setData, notify }) {
           x.status === "pending" && reports.some((p) => p.id === x.employeeId),
       )
       .map((x) => ({ ...x, kind: "Attendance Adjustment" })),
-  ].filter((x) => filter === "all" || x.kind === filter);
+  ].filter((x) => {
+    const name = data.people.find((p) => p.id === x.employeeId)?.name || "";
+    const date = x.from || x.date || "";
+    return (filter === "all" || x.kind === filter) && name.toLowerCase().includes(query.toLowerCase()) && (!fromFilter || date >= fromFilter) && (!toFilter || date <= toFilter);
+  });
   const decide = (item, status) => {
     if (item.kind === "Leave Request")
       setData((d) => applyLeaveDecision(d, item.id, status, note));
@@ -1455,7 +1845,10 @@ function Approvals({ data, scope, setData, notify }) {
         title="Approvals Inbox"
         desc="Review pending leave and attendance items from direct reports."
       />
-      <div className="flex gap-2">
+      <CollectionToolbar search={query} onSearch={setQuery} placeholder="Search approvals">
+        <input aria-label="Approvals from date" type="date" value={fromFilter} onChange={(e) => setFromFilter(e.target.value)} className="h-10 rounded-md border px-3" />
+        <input aria-label="Approvals to date" type="date" value={toFilter} onChange={(e) => setToFilter(e.target.value)} className="h-10 rounded-md border px-3" />
+        <div className="flex gap-2">
         <Button
           size="sm"
           variant={filter === "all" ? "secondary" : "outline"}
@@ -1477,7 +1870,8 @@ function Approvals({ data, scope, setData, notify }) {
         >
           Attendance
         </Button>
-      </div>
+        </div>
+      </CollectionToolbar>
       <Card>
         <CardContent className="space-y-3 p-0">
           {rows.length ? (
@@ -1550,31 +1944,27 @@ function Approvals({ data, scope, setData, notify }) {
 }
 
 function WhosIn({ data, scope }) {
-  const now = data.people.filter((p) => scope.includes(p.id));
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const now = data.people.filter((p) => scope.includes(p.id)).map((p) => {
+    const leave = data.leave.some((x) => x.employeeId === p.id && x.status === "approved" && x.from <= today && x.to >= today);
+    const open = data.attendance.some((x) => x.employeeId === p.id && x.date === today && !x.end);
+    return { p, status: leave ? "On Leave" : open ? "Clocked In" : "Clocked Out" };
+  }).filter(({ p, status }) => p.name.toLowerCase().includes(query.toLowerCase()) && (statusFilter === "all" || status === statusFilter));
   return (
     <>
       <Head
         title="Who's In"
         desc="Current direct-report presence in the tenant time zone."
       />
+      <CollectionToolbar search={query} onSearch={setQuery} placeholder="Search team">
+        <select aria-label="Presence status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-10 rounded-md border bg-background px-3">
+          <option value="all">All statuses</option><option>Clocked In</option><option>On Leave</option><option>Clocked Out</option>
+        </select>
+      </CollectionToolbar>
       <Card>
         <CardContent className="divide-y p-0">
-          {now.map((p) => {
-            const leave = data.leave.some(
-              (x) =>
-                x.employeeId === p.id &&
-                x.status === "approved" &&
-                x.from <= today &&
-                x.to >= today,
-            );
-            const open = data.attendance.some(
-              (x) => x.employeeId === p.id && x.date === today && !x.end,
-            );
-            const status = leave
-              ? "On Leave"
-              : open
-                ? "Clocked In"
-                : "Clocked Out";
+          {now.map(({ p, status }) => {
             return (
               <div className="flex items-center justify-between p-5" key={p.id}>
                 <div className="flex items-center gap-3">
@@ -1610,11 +2000,17 @@ function WhosIn({ data, scope }) {
 
 function TeamCalendar({ data, scope }) {
   const [showPending, setShowPending] = useState(false);
+  const [query, setQuery] = useState("");
+  const [fromFilter, setFromFilter] = useState("");
+  const [toFilter, setToFilter] = useState("");
   const items = data.leave.filter(
     (x) =>
       scope.includes(x.employeeId) &&
       (x.status === "approved" || (showPending && x.status === "pending")),
-  );
+  ).filter((x) => {
+    const name = data.people.find((p) => p.id === x.employeeId)?.name || "";
+    return name.toLowerCase().includes(query.toLowerCase()) && (!fromFilter || x.to >= fromFilter) && (!toFilter || x.from <= toFilter);
+  });
   const overlaps = new Set(
     items.flatMap((item, index) =>
       items
@@ -1635,6 +2031,10 @@ function TeamCalendar({ data, scope }) {
       >
         {showPending ? "Hide pending requests" : "Show pending requests"}
       </Button>
+      <CollectionToolbar search={query} onSearch={setQuery} placeholder="Search team leave">
+        <input aria-label="Team leave from date" type="date" value={fromFilter} onChange={(e) => setFromFilter(e.target.value)} className="h-10 rounded-md border px-3" />
+        <input aria-label="Team leave to date" type="date" value={toFilter} onChange={(e) => setToFilter(e.target.value)} className="h-10 rounded-md border px-3" />
+      </CollectionToolbar>
       <Card>
         <CardHeader>
           <CardTitle>Upcoming approved leave</CardTitle>
@@ -1673,6 +2073,7 @@ function TeamCalendar({ data, scope }) {
   );
 }
 function Alerts({ data, scope }) {
+  const [query, setQuery] = useState("");
   const alerts = data.people
     .filter((p) => scope.includes(p.id))
     .map((p) => {
@@ -1687,13 +2088,14 @@ function Alerts({ data, scope }) {
         percent: Math.round((mins / (job?.standardWeekly || 2400)) * 100),
       };
     })
-    .filter((x) => x.percent >= 80 || (!x.job?.otEligible && x.percent > 100));
+    .filter((x) => (x.percent >= 80 || (!x.job?.otEligible && x.percent > 100)) && x.p.name.toLowerCase().includes(query.toLowerCase()));
   return (
     <>
       <Head
         title="Overtime & Limit Alerts"
         desc="Proactive warnings from effective job profiles."
       />
+      <CollectionToolbar search={query} onSearch={setQuery} placeholder="Search alerts" />
       <Card>
         <CardContent className="space-y-3 p-5">
           {alerts.length ? (
@@ -1724,6 +2126,8 @@ function Alerts({ data, scope }) {
 }
 
 function Jobs({ data, setData, notify }) {
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({
@@ -1785,9 +2189,12 @@ function Jobs({ data, setData, notify }) {
           </Button>
         }
       />
+      <CollectionToolbar search={query} onSearch={setQuery} placeholder="Search job profiles">
+        <select aria-label="Job status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-10 rounded-md border bg-background px-3"><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select>
+      </CollectionToolbar>
       <Card>
         <CardContent className="space-y-3 p-5">
-          {data.jobs.map((job) => (
+          {data.jobs.filter((job) => (statusFilter === "all" || (job.active ? "active" : "inactive") === statusFilter) && `${job.title} ${job.department}`.toLowerCase().includes(query.toLowerCase())).map((job) => (
             <div
               className="flex flex-col gap-3 rounded-md border p-4 md:flex-row md:items-center md:justify-between"
               key={job.id}
@@ -1926,6 +2333,8 @@ function Jobs({ data, setData, notify }) {
   );
 }
 function Policies({ data, setData, notify }) {
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [typeOpen, setTypeOpen] = useState(false);
@@ -2029,12 +2438,15 @@ function Policies({ data, setData, notify }) {
           </div>
         }
       />
+      <CollectionToolbar search={query} onSearch={setQuery} placeholder="Search leave policies">
+        <select aria-label="Policy status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-10 rounded-md border bg-background px-3"><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select>
+      </CollectionToolbar>
       <Card>
         <CardHeader>
           <CardTitle>Leave types</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-3">
-          {data.leaveTypes.map((t) => (
+          {data.leaveTypes.filter((t) => t.name.toLowerCase().includes(query.toLowerCase())).map((t) => (
             <div className="rounded-md border p-4" key={t.id}>
               <b>{t.name}</b>
               <p className="text-sm text-muted-foreground">
@@ -2049,7 +2461,7 @@ function Policies({ data, setData, notify }) {
           <CardTitle>Job policy mappings</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {data.policies.map((p) => (
+          {data.policies.filter((p) => (statusFilter === "all" || (p.active === false ? "inactive" : "active") === statusFilter) && `${data.jobs.find((j) => j.id === p.jobId)?.title} ${typeName(data, p.leaveTypeId)}`.toLowerCase().includes(query.toLowerCase())).map((p) => (
             <div
               className="flex items-center justify-between rounded-md border p-4"
               key={p.id}
@@ -2354,6 +2766,7 @@ function Directory({ data, setData, notify }) {
 }
 function Overrides({ data, setData, notify }) {
   const [reason, setReason] = useState("");
+  const [auditQuery, setAuditQuery] = useState("");
   const [target, setTarget] = useState("leave");
   const [requestId, setRequestId] = useState("");
   const [employeeId, setEmployeeId] = useState(data.people[0]?.id || "");
@@ -2551,9 +2964,12 @@ function Overrides({ data, setData, notify }) {
         <CardHeader>
           <CardTitle>Recent audit events</CardTitle>
         </CardHeader>
+        <CardContent className="pb-0">
+          <CollectionToolbar search={auditQuery} onSearch={setAuditQuery} placeholder="Search override audit" />
+        </CardContent>
         <CardContent>
-          {data.audit.length ? (
-            data.audit
+          {data.audit.filter((x) => `${x.action} ${x.reason || ""} ${x.at || ""}`.toLowerCase().includes(auditQuery.toLowerCase())).length ? (
+            data.audit.filter((x) => `${x.action} ${x.reason || ""} ${x.at || ""}`.toLowerCase().includes(auditQuery.toLowerCase()))
               .slice()
               .reverse()
               .map((x, i) => (
@@ -2563,7 +2979,7 @@ function Overrides({ data, setData, notify }) {
                 </p>
               ))
           ) : (
-            <Empty text="No HR overrides recorded yet." />
+            <Empty text={auditQuery ? "No override audit events match your search." : "No HR overrides recorded yet."} />
           )}
         </CardContent>
       </Card>
@@ -2573,6 +2989,8 @@ function Overrides({ data, setData, notify }) {
 function Reports({ data }) {
   const [preset, setPreset] = useState("absenteeism");
   const [department, setDepartment] = useState("all");
+  const [query, setQuery] = useState("");
+  const [attendanceFilter, setAttendanceFilter] = useState("all");
   const [from, setFrom] = useState("2026-01-01");
   const [to, setTo] = useState("2026-12-31");
   const rows = data.people
@@ -2598,8 +3016,10 @@ function Reports({ data }) {
         (sum, balance) => sum + Math.max(0, remainingBalance(balance)),
         0,
       );
-      return { p, worked, leave, overtime, remaining };
-    });
+      const hasException = data.attendance.some((a) => a.employeeId === p.id && a.date >= from && a.date <= to && ["absent", "missing", "missing_punch", "below_standard"].includes(a.status));
+      return { p, worked, leave, overtime, remaining, hasException };
+    })
+    .filter((x) => x.p.name.toLowerCase().includes(query.toLowerCase()) && (attendanceFilter === "all" || (attendanceFilter === "exceptions" ? x.hasException : !x.hasException)));
   const exportCsv = () => {
     const csv = [
       ["Employee", "Department", "Worked minutes", "Approved leave days"],
@@ -2624,6 +3044,9 @@ function Reports({ data }) {
         }
       />
       <div className="flex flex-wrap gap-3">
+        <CollectionToolbar search={query} onSearch={setQuery} placeholder="Search employees">
+          <select aria-label="Report attendance status" value={attendanceFilter} onChange={(e) => setAttendanceFilter(e.target.value)} className="h-10 rounded-md border bg-background px-3"><option value="all">All attendance statuses</option><option value="exceptions">Has attendance exceptions</option><option value="clear">No attendance exceptions</option></select>
+        </CollectionToolbar>
         <label className="text-sm font-medium">
           Report preset
           <select
@@ -2735,6 +3158,193 @@ function Reports({ data }) {
     </>
   );
 }
+function PlatformOverview({ catalog, dataByTenant, onNavigate, onEnter }) {
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const active = catalog.filter((tenant) => tenant.status === "active");
+  const suspended = catalog.filter((tenant) => tenant.status === "suspended");
+  const people = active.reduce(
+    (total, tenant) =>
+      total +
+      (dataByTenant[tenant.id]?.people.filter((person) => person.status === "active")
+        .length || 0),
+    0,
+  );
+  const pending = active.reduce(
+    (total, tenant) =>
+      total +
+      (dataByTenant[tenant.id]?.leave.filter((item) => item.status === "pending")
+        .length || 0),
+    0,
+  );
+  const exceptions = active.reduce(
+    (total, tenant) =>
+      total +
+      (dataByTenant[tenant.id]?.attendance.filter(
+        (item) => !["complete", "future", "holiday", "leave"].includes(item.status),
+      ).length || 0),
+    0,
+  );
+  const organizations = catalog.filter((tenant) => (statusFilter === "all" || tenant.status === statusFilter) && `${tenant.name} ${tenant.id}`.toLowerCase().includes(query.toLowerCase()));
+  return (
+    <>
+      <Head
+        title="Global control plane"
+        desc="Monitor organizations, access, and system health from one place."
+        action={
+          <Button onClick={() => onNavigate("Organizations")}>
+            Manage organizations
+          </Button>
+        }
+      />
+      <div className="grid gap-4 md:grid-cols-5">
+        <Metric label="Organizations" value={catalog.length} detail={`${active.length} active`} />
+        <Metric label="Active users" value={people} detail="Across active organizations" />
+        <Metric label="Pending leave" value={pending} detail="Read-only aggregate" />
+        <Metric label="Attendance exceptions" value={exceptions} detail="Read-only aggregate" />
+        <Metric label="Needs attention" value={suspended.length} detail="Suspended organizations" />
+      </div>
+      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+        <Card>
+          <CardHeader>
+            <CardTitle>Organizations</CardTitle>
+            <CardDescription>Enter an organization to administer tenant HR settings.</CardDescription>
+          </CardHeader>
+          <CardContent className="pb-0">
+            <CollectionToolbar search={query} onSearch={setQuery} placeholder="Search organizations">
+              <select aria-label="Overview organization status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-10 rounded-md border bg-background px-3"><option value="all">All statuses</option><option value="active">Active</option><option value="suspended">Suspended</option></select>
+            </CollectionToolbar>
+          </CardContent>
+          <CardContent className="space-y-3">
+            {organizations.length ? organizations.map((tenant) => (
+              <div key={tenant.id} className="flex items-center justify-between gap-3 rounded-lg border p-4">
+                <div>
+                  <b>{tenant.name}</b>
+                  <p className="text-sm text-muted-foreground">{tenant.timezone} · {tenant.status}</p>
+                </div>
+                <Button size="sm" variant="outline" disabled={tenant.status !== "active"} onClick={() => onEnter(tenant.id)}>
+                  Enter organization
+                </Button>
+              </div>
+            )) : <Empty text="No organizations match the selected filters." />}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent activity</CardTitle>
+            <CardDescription>Platform-level changes and access events.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" onClick={() => onNavigate("PlatformAudit")}>Open audit log</Button>
+          </CardContent>
+        </Card>
+      </div>
+    </>
+  );
+}
+
+function Organizations({ catalog, onCreate, onStatusChange, onEnter }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [form, setForm] = useState({ id: "", name: "", timezone: "Asia/Singapore" });
+  const submit = (event) => {
+    event.preventDefault();
+    onCreate(form);
+    setForm({ id: "", name: "", timezone: "Asia/Singapore" });
+    setOpen(false);
+  };
+  return (
+    <>
+      <Head
+        title="Organizations"
+        desc="Create, suspend, reactivate, and enter organizations."
+        action={<Button onClick={() => setOpen(true)}><Plus className="mr-2 h-4 w-4" />Create organization</Button>}
+      />
+      <CollectionToolbar search={query} onSearch={setQuery} placeholder="Search organizations">
+        <select aria-label="Organization status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-10 rounded-md border bg-background px-3"><option value="all">All statuses</option><option value="active">Active</option><option value="suspended">Suspended</option></select>
+      </CollectionToolbar>
+      <Card>
+        <CardContent className="p-0">
+          {catalog.filter((tenant) => (statusFilter === "all" || tenant.status === statusFilter) && `${tenant.name} ${tenant.id}`.toLowerCase().includes(query.toLowerCase())).map((tenant) => (
+            <div key={tenant.id} className="flex flex-col gap-3 border-b p-5 last:border-0 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="flex items-center gap-2"><b>{tenant.name}</b><Status tone={tenant.status === "active" ? "success" : "warning"}>{tenant.status}</Status></div>
+                <p className="mt-1 text-sm text-muted-foreground">{tenant.id} · {tenant.timezone} · Created {tenant.createdAt}</p>
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" disabled={tenant.status !== "active"} onClick={() => onEnter(tenant.id)}>Enter organization</Button>
+                <Button size="sm" variant="outline" onClick={() => onStatusChange(tenant.id, tenant.status === "active" ? "suspended" : "active")}>
+                  {tenant.status === "active" ? "Suspend" : "Reactivate"}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+      {open && (
+        <Dialog title="Create organization" close={() => setOpen(false)}>
+          <form className="space-y-4" onSubmit={submit}>
+            <label className="block text-sm font-medium">Organization name<input aria-label="Organization name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="mt-1 h-10 w-full rounded-md border px-3" /></label>
+            <label className="block text-sm font-medium">Organization ID<input aria-label="Organization ID" required pattern="[a-z0-9-]+" value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} className="mt-1 h-10 w-full rounded-md border px-3" /></label>
+            <label className="block text-sm font-medium">Timezone<input aria-label="Timezone" required value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })} className="mt-1 h-10 w-full rounded-md border px-3" /></label>
+            <Button className="w-full">Create organization</Button>
+          </form>
+        </Dialog>
+      )}
+    </>
+  );
+}
+
+function AccessRoles({ catalog }) {
+  const [query, setQuery] = useState("");
+  return (
+    <>
+      <Head title="Access & roles" desc="Review who can administer each organization." />
+      <CollectionToolbar search={query} onSearch={setQuery} placeholder="Search organizations" />
+      <Card>
+        <CardContent className="p-0">
+          <div className="grid grid-cols-[1.2fr_1fr_1fr] border-b bg-muted/40 p-4 text-sm font-medium"><span>Organization</span><span>Tenant admins</span><span>Status</span></div>
+          {catalog.filter((tenant) => `${tenant.name} ${tenant.status}`.toLowerCase().includes(query.toLowerCase())).map((tenant) => (
+            <div key={tenant.id} className="grid grid-cols-[1.2fr_1fr_1fr] border-b p-4 text-sm last:border-0"><span>{tenant.name}</span><span>HR Admin · Reporting Manager</span><span>{tenant.status}</span></div>
+          ))}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function PlatformAudit({ events }) {
+  const [query, setQuery] = useState("");
+  events = events.filter((event) => `${event.action} ${event.target} ${event.at}`.toLowerCase().includes(query.toLowerCase()));
+  return (
+    <>
+      <Head title="Platform audit log" desc="Immutable administrative activity across organizations." />
+      <CollectionToolbar search={query} onSearch={setQuery} placeholder="Search audit events" />
+      <Card>
+        <CardContent className="p-0">
+          {events.length ? events.map((event) => <div key={event.id} className="border-b p-4 last:border-0"><b>{event.action}</b><p className="text-sm text-muted-foreground">{event.target} · {event.at}</p></div>) : <Empty text="No platform activity recorded yet." />}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function SystemSettings({ catalog }) {
+  return (
+    <>
+      <Head title="System settings" desc="Platform-wide defaults and operational metadata." />
+      <Card>
+        <CardContent className="space-y-4 p-6 text-sm">
+          <div><b>Organizations</b><p className="text-muted-foreground">{catalog.length} configured organization(s)</p></div>
+          <div><b>Data model</b><p className="text-muted-foreground">Tenant-scoped browser storage with explicit platform audit events.</p></div>
+          <div><b>Security boundary</b><p className="text-muted-foreground">Production deployments must enforce these checks on a trusted backend.</p></div>
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
 function Dialog({ title, close, children }) {
   return (
     <div
@@ -2762,18 +3372,42 @@ function Dialog({ title, close, children }) {
   );
 }
 
+const restoreSession = () => {
+  try {
+    const stored = JSON.parse(
+      localStorage.getItem("tlt-session-v1") || "null",
+    );
+    const account = DEMO_USERS[stored?.email];
+    const membership = account?.memberships.find(
+      (item) => item.tenantId === stored?.tenantId,
+    ) || account?.memberships[0];
+    if (!account || !membership || (!account.platformAdmin && !TENANTS[stored.tenantId])) return null;
+    const role = account.platformAdmin
+      ? ROLES.PLATFORM_ADMIN
+      : membership.roles.includes(stored.role)
+      ? stored.role
+      : membership.roles.at(-1);
+    return {
+      email: stored.email,
+      name: account.name,
+      platformAdmin: Boolean(account.platformAdmin),
+      memberships: account.memberships,
+      tenantId: account.platformAdmin ? null : membership.tenantId,
+      employeeId: membership.employeeId,
+      role,
+    };
+  } catch {
+    return null;
+  }
+};
+
 function App() {
-  const [session, setSession] = useState(() => {
-    try {
-      const stored = JSON.parse(
-        localStorage.getItem("tlt-session-v1") || "null",
-      );
-      return stored?.tenantId === seed.tenant.id ? stored : null;
-    } catch {
-      return null;
-    }
-  });
-  const [data, setDataState] = useState(loadData);
+  const [session, setSession] = useState(restoreSession);
+  const [catalog, setCatalog] = useState(loadTenantCatalog);
+  const [platformAudit, setPlatformAudit] = useState(loadPlatformAudit);
+  const [data, setDataState] = useState(() =>
+    loadData(restoreSession()?.tenantId || "tenant-main"),
+  );
   const [role, setRole] = useState(session?.role || "Employee");
   const [page, setPage] = useState(() => {
     const key = window.location.hash.split("/").pop();
@@ -2784,6 +3418,7 @@ function App() {
       approvals: "Approvals",
       whosin: "WhosIn",
       teamcalendar: "TeamCalendar",
+      teamdashboard: "TeamDashboard",
       alerts: "Alerts",
       jobs: "Jobs",
       policies: "Policies",
@@ -2791,6 +3426,12 @@ function App() {
       overrides: "Overrides",
       reports: "Reports",
       profile: "Profile",
+      "organization-overview": "OrganizationOverview",
+      "platform-overview": "PlatformOverview",
+      organizations: "Organizations",
+      access: "Access",
+      "platform-audit": "PlatformAudit",
+      "system-settings": "SystemSettings",
     };
     return map[key] || "Dashboard";
   });
@@ -2799,8 +3440,10 @@ function App() {
   const [toast, setToast] = useState("");
   const setData = (updater) =>
     setDataState((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      saveData(next);
+      const updated = typeof updater === "function" ? updater(prev) : updater;
+      if (!session?.tenantId) return prev;
+      const next = tenantize(updated, session.tenantId);
+      if (session) saveData(session.tenantId, next);
       return next;
     });
   const notify = (message) => {
@@ -2808,35 +3451,42 @@ function App() {
     setTimeout(() => setToast(""), 2600);
   };
   useEffect(() => {
-    if (session) window.location.hash = "#/app/dashboard";
+    if (session)
+      window.location.hash = `#/app/${session.platformAdmin && !session.tenantId ? "platform-overview" : "dashboard"}`;
     else window.location.hash = "#/login";
   }, [session]);
   useEffect(() => {
-    const employeePages = [
-      "Dashboard",
-      "Attendance",
-      "Leave",
-      "Holidays",
-      "Profile",
-    ];
-    if (role === "Employee" && !employeePages.includes(page))
-      setPage("Dashboard");
-    if (
-      role === "Reporting Manager" &&
-      ![
-        "Dashboard",
-        "Attendance",
-        "Leave",
-        "Holidays",
-        "Profile",
-        "Approvals",
-        "WhosIn",
-        "TeamCalendar",
-        "Alerts",
-      ].includes(page)
-    )
-      setPage("Dashboard");
-  }, [role, page]);
+    const context = session?.platformAdmin && !session?.tenantId ? "global" : "tenant";
+    if (!canAccessPage(role, page, context)) setPage(context === "global" ? "PlatformOverview" : "Dashboard");
+  }, [role, page, session]);
+  useEffect(() => {
+    const labels = {
+      Dashboard: "Dashboard",
+      Attendance: "My Attendance",
+      Leave: "Leave",
+      Holidays: "Holiday Calendar",
+      Profile: "Profile",
+      Approvals: "Approvals",
+      WhosIn: "Who's In",
+      TeamCalendar: "Team Leave Calendar",
+      Alerts: "Overtime & Alerts",
+      TeamDashboard: "Team Dashboard",
+      OrganizationOverview: "Organization Overview",
+      Jobs: "Job Profiles",
+      Policies: "Leave Policy Mapping",
+      Directory: "Directory",
+      Overrides: "Overrides",
+      Reports: "Master Reports",
+      PlatformOverview: "Global Overview",
+      Organizations: "Organizations",
+      Access: "Access & Roles",
+      PlatformAudit: "Audit Log",
+      SystemSettings: "System Settings",
+    };
+    document.title = session
+      ? `${labels[page] || "Workspace"} · Time & Leave Tracker`
+      : "Sign in · Time & Leave Tracker";
+  }, [session, page]);
   const signOut = () => {
     localStorage.removeItem("tlt-session-v1");
     setSession(null);
@@ -2844,8 +3494,9 @@ function App() {
     setTeam(false);
   };
   const resetDemo = () => {
-    localStorage.removeItem("tlt-data-v1:tenant-main");
-    setDataState(clone(seed));
+    if (!session?.tenantId) return notify("Enter an organization to reset tenant data.");
+    localStorage.removeItem(tenantStorageKey(session.tenantId));
+    setDataState(getTenantSeed(session.tenantId));
     setPage("Dashboard");
     setTeam(false);
     notify("Demo data reset.");
@@ -2855,132 +3506,165 @@ function App() {
       <AuthScreen
         onLogin={(user) => {
           setSession(user);
+          setDataState(loadData(user.tenantId || catalog[0].id));
           setRole(user.role);
           setPage("Dashboard");
           setTeam(false);
         }}
       />
     );
+  const platformGlobal = Boolean(session.platformAdmin && !session.tenantId);
+  const membership = activeMembership(session);
   const person =
-    data.people.find((p) => p.id === session.employeeId) || data.people[0];
-  const reports =
-    role === "Reporting Manager"
-      ? directReports(data, "jamie").map((p) => p.id)
-      : role === "HR Admin"
-        ? data.people.map((p) => p.id)
-        : [person.id];
+    data.people.find((p) => p.id === membership?.employeeId) || data.people[0];
+  const reports = person ? scopedEmployeeIds(data, person.id, role) : [];
+  const dataByTenant = Object.fromEntries(
+    catalog.map((tenant) => [
+      tenant.id,
+      tenant.id === session.tenantId ? data : loadData(tenant.id),
+    ]),
+  );
+  const tenantForView = platformGlobal
+    ? { id: "global", name: "Platform Control Plane", timezone: "Global" }
+    : data.tenant;
   const navigate = (next) => {
-    setPage(next);
-    window.location.hash = "#/app/" + next.toLowerCase();
+    const context = platformGlobal ? "global" : "tenant";
+    const destination = canAccessPage(role, next, context)
+      ? next
+      : platformGlobal
+        ? "PlatformOverview"
+        : "Dashboard";
+    setPage(destination);
+    window.location.hash = "#/app/" + destination.toLowerCase();
   };
+  const changeTenant = (tenantId) => {
+    const nextMembership = session.memberships.find(
+      (item) => item.tenantId === tenantId,
+    );
+    if (!nextMembership) return;
+    if (TENANTS[tenantId]?.status === "suspended") {
+      notify("This organization is suspended.");
+      return;
+    }
+    const nextSession = {
+      ...session,
+      tenantId,
+      employeeId: nextMembership.employeeId,
+      role: session.platformAdmin ? ROLES.HR_ADMIN : nextMembership.roles.at(-1),
+    };
+    localStorage.setItem("tlt-session-v1", JSON.stringify(nextSession));
+    setSession(nextSession);
+    setDataState(loadData(tenantId));
+    setRole(nextSession.role);
+    setPage("Dashboard");
+    setTeam(false);
+  };
+  const enterTenant = (tenantId) => {
+    const tenant = catalog.find((item) => item.id === tenantId);
+    if (!tenant || tenant.status !== "active") {
+      notify("Only active organizations can be entered.");
+      return;
+    }
+    const nextSession = {
+      ...session,
+      tenantId,
+      employeeId: dataByTenant[tenantId]?.people[0]?.id || null,
+      role: ROLES.HR_ADMIN,
+    };
+    localStorage.setItem("tlt-session-v1", JSON.stringify(nextSession));
+    setPlatformAudit(appendPlatformAudit({ action: "Entered organization", target: tenant.name }));
+    setSession(nextSession);
+    setDataState(loadData(tenantId));
+    setRole(ROLES.HR_ADMIN);
+    setPage("Dashboard");
+    setTeam(false);
+  };
+  const exitTenant = () => {
+    const nextSession = { ...session, tenantId: null, role: ROLES.PLATFORM_ADMIN };
+    localStorage.setItem("tlt-session-v1", JSON.stringify(nextSession));
+    setPlatformAudit(appendPlatformAudit({ action: "Exited organization", target: data.tenant.name }));
+    setSession(nextSession);
+    setDataState(loadData(catalog[0]?.id || "tenant-main"));
+    setRole(ROLES.PLATFORM_ADMIN);
+    setPage("PlatformOverview");
+    setTeam(false);
+  };
+  const persistCatalog = (nextCatalog) => {
+    nextCatalog.forEach((tenant) => {
+      TENANTS[tenant.id] = { ...TENANTS[tenant.id], ...tenant };
+    });
+    setCatalog(nextCatalog);
+    saveTenantCatalog(nextCatalog);
+  };
+  const createOrganization = (form) => {
+    const id = form.id.trim().toLowerCase();
+    if (!id || TENANTS[id]) return notify("Choose a unique organization ID.");
+    const tenant = { id, name: form.name.trim(), timezone: form.timezone.trim(), weekStart: 1, status: "active", createdAt: today };
+    TENANTS[id] = tenant;
+    saveData(id, getTenantSeed(id));
+    persistCatalog([...catalog, tenant]);
+    const nextAudit = appendPlatformAudit({ action: "Created organization", target: tenant.name });
+    setPlatformAudit(nextAudit);
+    notify("Organization created.");
+  };
+  const setOrganizationStatus = (tenantId, status) => {
+    const tenant = catalog.find((item) => item.id === tenantId);
+    if (!tenant) return;
+    const nextCatalog = catalog.map((item) => item.id === tenantId ? { ...item, status } : item);
+    persistCatalog(nextCatalog);
+    TENANTS[tenantId] = { ...TENANTS[tenantId], status };
+    const nextAudit = appendPlatformAudit({ action: status === "suspended" ? "Suspended organization" : "Reactivated organization", target: tenant.name });
+    setPlatformAudit(nextAudit);
+    notify(`${tenant.name} ${status}.`);
+  };
+  const context = platformGlobal ? "global" : "tenant";
+  const authorizedPage = canAccessPage(role, page, context)
+    ? page
+    : platformGlobal
+      ? "PlatformOverview"
+      : "Dashboard";
   let view;
-  if (page === "Dashboard")
-    view =
-      team && role === "Reporting Manager" ? (
-        <>
-          <Head
-            title="Team command center"
-            desc="Coverage, approvals, and workload signals for your direct reports."
-          />
-          <div className="grid gap-4 md:grid-cols-4">
-            <Metric
-              label="Direct reports"
-              value={reports.length}
-              detail="Active team members"
-            />
-            <Metric
-              label="Pending approvals"
-              value={
-                data.leave.filter(
-                  (x) =>
-                    reports.includes(x.employeeId) && x.status === "pending",
-                ).length +
-                data.adjustments.filter(
-                  (x) =>
-                    reports.includes(x.employeeId) && x.status === "pending",
-                ).length
-              }
-              detail="Needs review"
-            />
-            <Metric
-              label="Coverage"
-              value="92%"
-              detail="Scheduled availability"
-            />
-            <Metric label="Alerts" value="2" detail="Limit warnings" />
-          </div>
-          <Card>
-            <CardHeader>
-              <CardTitle>Manager actions</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-3 md:grid-cols-3">
-              <Button variant="outline" onClick={() => setPage("Approvals")}>
-                Review approvals
-              </Button>
-              <Button variant="outline" onClick={() => setPage("WhosIn")}>
-                Who's In
-              </Button>
-              <Button variant="outline" onClick={() => setPage("TeamCalendar")}>
-                Team leave calendar
-              </Button>
-            </CardContent>
-          </Card>
-        </>
-      ) : role === "HR Admin" ? (
-        <>
-          <Head
-            title="Organization overview"
-            desc="Tenant administration, compliance, and workforce visibility."
-          />
-          <div className="grid gap-4 md:grid-cols-4">
-            <Metric
-              label="People"
-              value={data.people.length}
-              detail="Active directory"
-            />
-            <Metric
-              label="Jobs"
-              value={data.jobs.length}
-              detail="Configured profiles"
-            />
-            <Metric
-              label="Leave requests"
-              value={data.leave.length}
-              detail="All statuses"
-            />
-            <Metric
-              label="Audit events"
-              value={data.audit.length}
-              detail="Recorded actions"
-            />
-          </div>
-          <Card>
-            <CardHeader>
-              <CardTitle>Admin workspace</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-3 md:grid-cols-3">
-              <Button variant="outline" onClick={() => setPage("Jobs")}>
-                Jobs & policies
-              </Button>
-              <Button variant="outline" onClick={() => setPage("Directory")}>
-                Global directory
-              </Button>
-              <Button variant="outline" onClick={() => setPage("Reports")}>
-                Master reports
-              </Button>
-            </CardContent>
-          </Card>
-        </>
-      ) : (
-        <EmployeeDashboard
-          data={data}
-          person={person}
-          running={running}
-          setRunning={setRunning}
-          onNavigate={navigate}
-        />
-      );
-  if (page === "Attendance")
+  if (platformGlobal && authorizedPage === "PlatformOverview")
+    view = (
+      <PlatformOverview
+        catalog={catalog}
+        dataByTenant={dataByTenant}
+        onNavigate={navigate}
+        onEnter={enterTenant}
+      />
+    );
+  if (platformGlobal && authorizedPage === "Organizations")
+    view = (
+      <Organizations
+        catalog={catalog}
+        onCreate={createOrganization}
+        onStatusChange={setOrganizationStatus}
+        onEnter={enterTenant}
+      />
+    );
+  if (platformGlobal && authorizedPage === "Access")
+    view = <AccessRoles catalog={catalog} />;
+  if (platformGlobal && authorizedPage === "PlatformAudit")
+    view = <PlatformAudit events={platformAudit} />;
+  if (platformGlobal && authorizedPage === "SystemSettings")
+    view = <SystemSettings catalog={catalog} />;
+  if (!platformGlobal && authorizedPage === "Dashboard")
+    view = team && role === "Reporting Manager" ? (
+      <TeamDashboard data={data} scope={reports} onNavigate={navigate} />
+    ) : (
+      <EmployeeDashboard
+        data={data}
+        person={person}
+        running={running}
+        setRunning={setRunning}
+        onNavigate={navigate}
+      />
+    );
+  if (!platformGlobal && authorizedPage === "TeamDashboard")
+    view = <TeamDashboard data={data} scope={reports} onNavigate={navigate} />;
+  if (!platformGlobal && authorizedPage === "OrganizationOverview")
+    view = <OrganizationOverview data={data} onNavigate={navigate} />;
+  if (authorizedPage === "Attendance")
     view = (
       <Attendance
         data={data}
@@ -2989,11 +3673,11 @@ function App() {
         notify={notify}
       />
     );
-  if (page === "Leave")
+  if (authorizedPage === "Leave")
     view = (
       <Leave data={data} person={person} setData={setData} notify={notify} />
     );
-  if (page === "Holidays")
+  if (authorizedPage === "Holidays")
     view = (
       <Holidays
         data={data}
@@ -3002,7 +3686,7 @@ function App() {
         notify={notify}
       />
     );
-  if (page === "Approvals")
+  if (authorizedPage === "Approvals")
     view = (
       <Approvals
         data={data}
@@ -3011,21 +3695,23 @@ function App() {
         notify={notify}
       />
     );
-  if (page === "WhosIn") view = <WhosIn data={data} scope={reports} />;
-  if (page === "TeamCalendar")
+  if (authorizedPage === "WhosIn") view = <WhosIn data={data} scope={reports} />;
+  if (authorizedPage === "TeamCalendar")
     view = <TeamCalendar data={data} scope={reports} />;
-  if (page === "Alerts") view = <Alerts data={data} scope={reports} />;
-  if (page === "Jobs")
+  if (authorizedPage === "Alerts") view = <Alerts data={data} scope={reports} />;
+  if (authorizedPage === "Jobs")
     view = <Jobs data={data} setData={setData} notify={notify} />;
-  if (page === "Policies")
+  if (authorizedPage === "Policies")
     view = <Policies data={data} setData={setData} notify={notify} />;
-  if (page === "Directory")
+  if (authorizedPage === "Directory")
     view = <Directory data={data} setData={setData} notify={notify} />;
-  if (page === "Overrides")
+  if (authorizedPage === "Overrides")
     view = <Overrides data={data} setData={setData} notify={notify} />;
-  if (page === "Reports") view = <Reports data={data} />;
-  if (page === "Profile")
+  if (authorizedPage === "Reports") view = <Reports data={data} />;
+  if (authorizedPage === "Profile")
     view = (
+      <>
+      <Head title="Profile" desc="Review your employee profile and assigned workspace." />
       <Card>
         <CardHeader>
           <CardTitle>{person.name}</CardTitle>
@@ -3035,19 +3721,29 @@ function App() {
         </CardHeader>
         <CardContent>{person.email}</CardContent>
       </Card>
+      </>
     );
   return (
     <Shell
       user={session}
+      tenant={tenantForView}
       role={role}
+      roles={availableRoles(session)}
+      platformGlobal={platformGlobal}
       setRole={(value) => {
+        if (!isAssignedRole(session, value)) return;
         setRole(value);
+        const nextSession = { ...session, role: value };
+        setSession(nextSession);
+        localStorage.setItem("tlt-session-v1", JSON.stringify(nextSession));
         setPage("Dashboard");
         if (value !== "Reporting Manager") setTeam(false);
       }}
+      onTenantChange={changeTenant}
+      onExitTenant={exitTenant}
       team={team}
       setTeam={setTeam}
-      page={page}
+      page={authorizedPage}
       go={navigate}
       onSignOut={signOut}
       onReset={resetDemo}
