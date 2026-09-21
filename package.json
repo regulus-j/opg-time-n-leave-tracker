@@ -1,1 +1,56 @@
-{"type":"module","scripts":{"dev":"vite --host 127.0.0.1 --port 5173","build":"vite build","preview":"vite preview","serve:dist":"npm run build && py -m http.server 4173 --directory dist","test:e2e":"node scripts/e2e.mjs","test:domain":"node scripts/domain-tests.mjs","audit:a11y":"node scripts/a11y-audit.mjs","audit:layout":"node scripts/layout-audit.mjs","audit:authorization":"node scripts/authorization-tests.mjs","audit:baseline":"node scripts/audit-baseline.mjs","audit\\:requirements":"node scripts/requirements-audit.mjs","audit:requirements":"node scripts/requirements-audit.mjs"},"dependencies":{"@vitejs/plugin-react":"latest","class-variance-authority":"latest","clsx":"latest","lucide-react":"latest","react":"latest","react-dom":"latest","recharts":"latest","tailwind-merge":"latest","tailwindcss":"3.4.17","vite":"latest"},"devDependencies":{"autoprefixer":"latest","axe-core":"^4.13.0","playwright-core":"^1.62.1","postcss":"latest"}}
+{
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:client": "vite --host 127.0.0.1 --port 5173",
+    "dev:server": "node src/server/server.js",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "serve:dist": "npm run build && py -m http.server 4173 --directory dist",
+    "start": "node src/server/server.js",
+    "migrate": "node database/migrate.js",
+    "db:migrate": "node database/migrate.js",
+    "db:seed": "node database/seeders/seed.js",
+    "db:reset": "docker compose down -v",
+    "db:test:prepare": "node scripts/prepare-test-db.mjs",
+    "test:unit": "node --test tests/unit/**/*.test.js",
+    "test:integration": "node --test tests/integration/**/*.test.js",
+    "test:e2e": "node tests/e2e/e2e.mjs",
+    "test:domain": "node tests/unit/domain-tests.mjs",
+    "audit:a11y": "node tests/audits/a11y-audit.mjs",
+    "audit:layout": "node tests/audits/layout-audit.mjs",
+    "audit:authorization": "node tests/unit/authorization-tests.mjs",
+    "audit:security": "node tests/audits/security-audit.mjs",
+    "test:all": "npm run typecheck && npm run test:unit && npm run test:integration && npm run test:domain && npm run audit:security && npm run audit:requirements",
+    "verify:full": "npm run test:all && npm run build && npm run audit:authorization && npm run test:e2e && npm run audit:layout && npm run audit:a11y",
+    "audit:baseline": "node tests/audits/audit-baseline.mjs",
+    "audit:requirements": "node tests/audits/requirements-audit.mjs"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "bcryptjs": "^3.0.3",
+    "class-variance-authority": "latest",
+    "clsx": "latest",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^18.0.0",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "latest",
+    "pg": "^8.16.3",
+    "react": "latest",
+    "react-dom": "latest",
+    "recharts": "latest",
+    "tailwind-merge": "latest",
+    "tailwindcss": "3.4.17",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "autoprefixer": "latest",
+    "axe-core": "^4.13.0",
+    "playwright-core": "^1.62.1",
+    "postcss": "latest",
+    "supertest": "^7.2.2",
+    "typescript": "^7.0.2"
+  }
+}

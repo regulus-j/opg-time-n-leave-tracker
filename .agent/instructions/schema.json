@@ -1,0 +1,949 @@
+{
+  "$defs": {
+    "Tenant": {
+      "type": "object",
+      "properties": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "locale": {
+          "type": "string"
+        },
+        "week_start": {
+          "type": "integer"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "settings": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "name",
+        "timezone",
+        "locale",
+        "week_start",
+        "currency",
+        "settings"
+      ],
+      "additionalProperties": false
+    },
+    "User": {
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "employee_id": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "user_id",
+        "tenant_id",
+        "employee_id",
+        "display_name",
+        "email",
+        "capabilities",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "Employee": {
+      "type": "object",
+      "properties": {
+        "employee_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "employee_number": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "manager_id": {
+          "type": ["string", "null"]
+        },
+        "department_id": {
+          "type": "string"
+        },
+        "location_id": {
+          "type": "string"
+        },
+        "holiday_calendar_id": {
+          "type": "string"
+        },
+        "work_schedule": {
+          "type": "object"
+        },
+        "start_date": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "employee_id",
+        "tenant_id",
+        "employee_number",
+        "name",
+        "job_id",
+        "manager_id",
+        "department_id",
+        "location_id",
+        "holiday_calendar_id",
+        "work_schedule",
+        "start_date",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "Department": {
+      "type": "object",
+      "properties": {
+        "department_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": ["department_id", "tenant_id", "name", "code", "status"],
+      "additionalProperties": false
+    },
+    "Location": {
+      "type": "object",
+      "properties": {
+        "location_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "holiday_calendar_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "location_id",
+        "tenant_id",
+        "name",
+        "timezone",
+        "holiday_calendar_id",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "WorkSchedule": {
+      "type": "object",
+      "properties": {
+        "schedule_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "weekday_rules": {
+          "type": "object"
+        },
+        "effective_from": {
+          "type": "string"
+        },
+        "effective_to": {
+          "type": ["string", "null"]
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schedule_id",
+        "tenant_id",
+        "name",
+        "weekday_rules",
+        "effective_from",
+        "effective_to",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "JobProfile": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "department_id": {
+          "type": "string"
+        },
+        "standard_daily_mins": {
+          "type": "integer"
+        },
+        "standard_weekly_mins": {
+          "type": "integer"
+        },
+        "is_ot_eligible": {
+          "type": "boolean"
+        },
+        "max_daily_mins": {
+          "type": "integer"
+        },
+        "effective_from": {
+          "type": "string"
+        },
+        "effective_to": {
+          "type": ["string", "null"]
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_id",
+        "tenant_id",
+        "title",
+        "department_id",
+        "standard_daily_mins",
+        "standard_weekly_mins",
+        "is_ot_eligible",
+        "max_daily_mins",
+        "effective_from",
+        "effective_to",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AttendanceSession": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "employee_id": {
+          "type": "string"
+        },
+        "clock_in_at": {
+          "type": "string"
+        },
+        "clock_out_at": {
+          "type": ["string", "null"]
+        },
+        "source": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_id",
+        "tenant_id",
+        "employee_id",
+        "clock_in_at",
+        "clock_out_at",
+        "source",
+        "status",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "AttendanceSummary": {
+      "type": "object",
+      "properties": {
+        "summary_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "employee_id": {
+          "type": "string"
+        },
+        "local_date": {
+          "type": "string"
+        },
+        "worked_mins": {
+          "type": "integer"
+        },
+        "scheduled_mins": {
+          "type": "integer"
+        },
+        "overtime_mins": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "exception_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "effective_job_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary_id",
+        "tenant_id",
+        "employee_id",
+        "local_date",
+        "worked_mins",
+        "scheduled_mins",
+        "overtime_mins",
+        "status",
+        "exception_codes",
+        "effective_job_id"
+      ],
+      "additionalProperties": false
+    },
+    "AttendanceAdjustment": {
+      "type": "object",
+      "properties": {
+        "adjustment_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "employee_id": {
+          "type": "string"
+        },
+        "local_date": {
+          "type": "string"
+        },
+        "original": {
+          "type": "object"
+        },
+        "proposed": {
+          "type": "object"
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "attachment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string"
+        },
+        "submitted_at": {
+          "type": ["string", "null"]
+        },
+        "decided_by": {
+          "type": ["string", "null"]
+        },
+        "decided_at": {
+          "type": ["string", "null"]
+        },
+        "decision_note": {
+          "type": ["string", "null"]
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "adjustment_id",
+        "tenant_id",
+        "employee_id",
+        "local_date",
+        "original",
+        "proposed",
+        "reason",
+        "attachment_ids",
+        "status",
+        "submitted_at",
+        "decided_by",
+        "decided_at",
+        "decision_note",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "LeaveType": {
+      "type": "object",
+      "properties": {
+        "leave_type_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "is_paid": {
+          "type": "boolean"
+        },
+        "color": {
+          "type": "string"
+        },
+        "description": {
+          "type": ["string", "null"]
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "leave_type_id",
+        "tenant_id",
+        "name",
+        "code",
+        "unit",
+        "is_paid",
+        "color",
+        "description",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "JobLeavePolicy": {
+      "type": "object",
+      "properties": {
+        "policy_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "leave_type_id": {
+          "type": "string"
+        },
+        "annual_allotment": {
+          "type": "number"
+        },
+        "accrual_rule": {
+          "type": "object"
+        },
+        "carry_over_limit": {
+          "type": "number"
+        },
+        "allow_negative": {
+          "type": "boolean"
+        },
+        "allow_partial_day": {
+          "type": "boolean"
+        },
+        "counting_rule": {
+          "type": "object"
+        },
+        "request_window": {
+          "type": "object"
+        },
+        "documentation_rule": {
+          "type": "object"
+        },
+        "effective_from": {
+          "type": "string"
+        },
+        "effective_to": {
+          "type": ["string", "null"]
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "policy_id",
+        "tenant_id",
+        "job_id",
+        "leave_type_id",
+        "annual_allotment",
+        "accrual_rule",
+        "carry_over_limit",
+        "allow_negative",
+        "allow_partial_day",
+        "counting_rule",
+        "request_window",
+        "documentation_rule",
+        "effective_from",
+        "effective_to",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "LeaveBalance": {
+      "type": "object",
+      "properties": {
+        "balance_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "employee_id": {
+          "type": "string"
+        },
+        "leave_type_id": {
+          "type": "string"
+        },
+        "period": {
+          "type": "string"
+        },
+        "accrued": {
+          "type": "number"
+        },
+        "carried_over": {
+          "type": "number"
+        },
+        "manual_adjustments": {
+          "type": "number"
+        },
+        "used": {
+          "type": "number"
+        },
+        "pending": {
+          "type": "number"
+        },
+        "remaining": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "as_of": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "balance_id",
+        "tenant_id",
+        "employee_id",
+        "leave_type_id",
+        "period",
+        "accrued",
+        "carried_over",
+        "manual_adjustments",
+        "used",
+        "pending",
+        "remaining",
+        "unit",
+        "as_of"
+      ],
+      "additionalProperties": false
+    },
+    "LeaveLedgerEntry": {
+      "type": "object",
+      "properties": {
+        "entry_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "employee_id": {
+          "type": "string"
+        },
+        "leave_type_id": {
+          "type": "string"
+        },
+        "effective_date": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "entry_type": {
+          "type": "string"
+        },
+        "source_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "created_by": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entry_id",
+        "tenant_id",
+        "employee_id",
+        "leave_type_id",
+        "effective_date",
+        "amount",
+        "entry_type",
+        "source_id",
+        "reason",
+        "created_by",
+        "created_at"
+      ],
+      "additionalProperties": false
+    },
+    "LeaveRequest": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "employee_id": {
+          "type": "string"
+        },
+        "leave_type_id": {
+          "type": "string"
+        },
+        "start_date": {
+          "type": "string"
+        },
+        "end_date": {
+          "type": "string"
+        },
+        "partial_day": {
+          "type": "string"
+        },
+        "chargeable_amount": {
+          "type": "number"
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "attachment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string"
+        },
+        "approver_id": {
+          "type": ["string", "null"]
+        },
+        "submitted_at": {
+          "type": ["string", "null"]
+        },
+        "decided_at": {
+          "type": ["string", "null"]
+        },
+        "decision_note": {
+          "type": ["string", "null"]
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "request_id",
+        "tenant_id",
+        "employee_id",
+        "leave_type_id",
+        "start_date",
+        "end_date",
+        "partial_day",
+        "chargeable_amount",
+        "reason",
+        "attachment_ids",
+        "status",
+        "approver_id",
+        "submitted_at",
+        "decided_at",
+        "decision_note",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "Attachment": {
+      "type": "object",
+      "properties": {
+        "attachment_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "owner_type": {
+          "type": "string"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "file_name": {
+          "type": "string"
+        },
+        "mime_type": {
+          "type": "string"
+        },
+        "size_bytes": {
+          "type": "integer"
+        },
+        "mock_url": {
+          "type": "string"
+        },
+        "validation_status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "attachment_id",
+        "tenant_id",
+        "owner_type",
+        "owner_id",
+        "file_name",
+        "mime_type",
+        "size_bytes",
+        "mock_url",
+        "validation_status"
+      ],
+      "additionalProperties": false
+    },
+    "HolidayCalendar": {
+      "type": "object",
+      "properties": {
+        "holiday_calendar_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "location_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "holiday_calendar_id",
+        "tenant_id",
+        "name",
+        "location_ids",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "Holiday": {
+      "type": "object",
+      "properties": {
+        "holiday_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "holiday_calendar_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "local_date": {
+          "type": "string"
+        },
+        "observance_type": {
+          "type": "string"
+        },
+        "description": {
+          "type": ["string", "null"]
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "holiday_id",
+        "tenant_id",
+        "holiday_calendar_id",
+        "name",
+        "local_date",
+        "observance_type",
+        "description",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "Alert": {
+      "type": "object",
+      "properties": {
+        "alert_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "employee_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "period_start": {
+          "type": "string"
+        },
+        "period_end": {
+          "type": "string"
+        },
+        "current_mins": {
+          "type": "integer"
+        },
+        "threshold_mins": {
+          "type": "integer"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "alert_id",
+        "tenant_id",
+        "employee_id",
+        "type",
+        "severity",
+        "period_start",
+        "period_end",
+        "current_mins",
+        "threshold_mins",
+        "created_at",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AuditEvent": {
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "actor_user_id": {
+          "type": "string"
+        },
+        "actor_role": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "target_type": {
+          "type": "string"
+        },
+        "target_id": {
+          "type": "string"
+        },
+        "occurred_at": {
+          "type": "string"
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "event_id",
+        "tenant_id",
+        "actor_user_id",
+        "actor_role",
+        "action",
+        "target_type",
+        "target_id",
+        "occurred_at",
+        "reason",
+        "metadata"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
