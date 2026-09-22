@@ -10,6 +10,20 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Older releases registered a cache-first service worker. Remove those
+      // registrations and caches once so obsolete hashed assets cannot blank
+      // the application after a deployment.
+      (async () => {
+        if (!('serviceWorker' in navigator)) return;
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        const cacheNames = 'caches' in window ? await caches.keys() : [];
+        if (!registrations.length && !cacheNames.length) return;
+        await Promise.all(registrations.map((registration) => registration.unregister()));
+        if ('caches' in window) await Promise.all(cacheNames.map((name) => caches.delete(name)));
+        window.location.reload();
+      })();
+    </script>
     <script type="module" src="/src/client/app.jsx"></script>
   </body>
 </html>
