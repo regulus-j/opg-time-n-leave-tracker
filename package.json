@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
+    "autoprefixer": "latest",
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "latest",
     "clsx": "latest",
@@ -38,6 +39,7 @@
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "latest",
     "pg": "^8.16.3",
+    "postcss": "latest",
     "react": "latest",
     "react-dom": "latest",
     "recharts": "latest",
@@ -46,10 +48,8 @@
     "vite": "latest"
   },
   "devDependencies": {
-    "autoprefixer": "latest",
     "axe-core": "^4.13.0",
     "playwright-core": "^1.62.1",
-    "postcss": "latest",
     "supertest": "^7.2.2",
     "typescript": "^7.0.2"
   }
