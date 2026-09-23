@@ -19,6 +19,17 @@ export const problem = (error, req, res, next) => {
   const status = Number.isInteger(error?.status)
     ? error.status
     : databaseStatus || 500;
+  if (status >= 500) {
+    // Keep the client response generic, but leave enough non-sensitive context
+    // in the Vercel function log to diagnose database/runtime failures.
+    console.error("Unhandled request failure", {
+      request_id: req.requestId,
+      method: req.method,
+      path: req.originalUrl,
+      code: error?.code,
+      message: error?.message,
+    });
+  }
   const title =
     error?.title ||
     (status === 400
