@@ -31,6 +31,8 @@ Configure the project with:
 
 Required server-side variables include `DATABASE_URL`, `DB_SSL=true`, `DB_SSL_REJECT_UNAUTHORIZED=true`, `DB_POOL_MAX=1`, `JWT_SECRET`, `CSRF_SECRET`, `COOKIE_SECRET`, `COOKIE_SECURE=true`, `COOKIE_SAME_SITE=lax`, and the configured timeout/rate-limit values. Do not prefix these with `VITE_`.
 
+If the Vercel function reports `SELF_SIGNED_CERT_IN_CHAIN`, download the Supabase root certificate from Database Settings → SSL Configuration. Add it to Vercel as `DB_SSL_CA` (preserving PEM newlines) or as `DB_SSL_CA_BASE64` using a base64-encoded PEM. Keep `DB_SSL_REJECT_UNAUTHORIZED=true`; do not bypass certificate verification in Production.
+
 Deploy Preview first. Confirm SPA refreshes, `/api/v1/auth/me`, secure cookies, CSRF writes, reports, CSV downloads, and tenant context switching before promoting the deployment.
 
 ## Migration and rollback

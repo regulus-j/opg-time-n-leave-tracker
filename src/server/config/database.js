@@ -2,6 +2,9 @@ import pg from "pg";
 import "dotenv/config";
 
 const { Pool } = pg;
+const sslCa = process.env.DB_SSL_CA_BASE64
+  ? Buffer.from(process.env.DB_SSL_CA_BASE64, "base64").toString("utf8")
+  : process.env.DB_SSL_CA?.replaceAll("\\n", "\n");
 pg.types.setTypeParser(1700, (value) => Number(value));
 pg.types.setTypeParser(1082, (value) => value);
 pg.types.setTypeParser(1114, (value) => `${value.replace(" ", "T")}Z`);
@@ -17,6 +20,7 @@ export const pool = new Pool({
       ? {
           rejectUnauthorized:
             process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false",
+          ...(sslCa ? { ca: sslCa } : {}),
         }
       : undefined,
 });
