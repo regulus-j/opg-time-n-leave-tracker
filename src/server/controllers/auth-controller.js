@@ -128,7 +128,10 @@ export const context = async (req, res) => {
   );
   if (tenantId !== null && !result.rowCount)
     throw new HttpError(403, "Forbidden", "The platform administrator is not assigned to that tenant.");
-  const membership = result.rows[0] || null;
+  // A null tenant_id means the platform administrator is exiting the active
+  // organization. Keep the membership list for the platform overview, but do
+  // not select the first membership as a new active tenant.
+  const membership = tenantId === null ? null : result.rows[0] || null;
   const actor = {
     user_id: req.actor.platform_user_id || req.actor.user_id,
     tenant_id: membership?.tenant_id || null,

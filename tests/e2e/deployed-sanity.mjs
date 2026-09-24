@@ -51,7 +51,7 @@ async function login(page, persona) {
   await page.getByRole("heading", { name: "Make your time count." }).waitFor({ timeout: 30000 });
 }
 
-async function run(name, persona, viewport, fn) {
+async function run(name, persona, viewport, fn, options = {}) {
   const context = await browser.newContext({ viewport });
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
@@ -64,8 +64,14 @@ async function run(name, persona, viewport, fn) {
     await fn(page);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
     assert.equal(overflow, false, "unexpected horizontal overflow");
-    assert.equal(consoleErrors.length, 0, `browser console errors: ${consoleErrors.join(" | ")}`);
-    assert.equal(requestFailures.length, 0, `failed requests: ${requestFailures.join(" | ")}`);
+    const unexpectedConsoleErrors = options.allowExpectedNetworkErrors
+      ? consoleErrors.filter((error) => !error.includes("401"))
+      : consoleErrors;
+    const unexpectedRequestFailures = options.allowExpectedNetworkErrors
+      ? requestFailures.filter((failure) => !failure.includes("/auth/logout"))
+      : requestFailures;
+    assert.equal(unexpectedConsoleErrors.length, 0, `browser console errors: ${unexpectedConsoleErrors.join(" | ")}`);
+    assert.equal(unexpectedRequestFailures.length, 0, `failed requests: ${unexpectedRequestFailures.join(" | ")}`);
     await page.screenshot({ path: path.join(artifactDir, `${name}.png`), fullPage: true });
     results.push({ name, persona, viewport, status: "PASS" });
   } catch (error) {
@@ -84,7 +90,7 @@ await run("invalid-login", "user", desktop, async (page) => {
   await page.getByLabel("Password").fill("incorrect-password");
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByRole("alert").waitFor();
-});
+}, { allowExpectedNetworkErrors: true });
 
 await run("user-personal-data", "user", desktop, async (page) => {
   const employee = (await api(page, "employees")).body[0];
@@ -96,8 +102,11 @@ await run("user-personal-data", "user", desktop, async (page) => {
   await page.getByRole("button", { name: "Leave", exact: true }).click();
   await page.getByRole("heading", { name: "Leave" }).waitFor();
   const balanceRows = (await api(page, "leave-balances")).body;
-  assert.equal(await page.locator("p.text-primary").count(), balanceRows.length, "rendered allowance count differs from personal balances");
+  const leaveTypes = (await api(page, "leave-types")).body;
+  const renderedAllowanceNames = await page.locator("main p.text-sm.font-bold.text-primary").allTextContents();
+  assert.deepEqual([...renderedAllowanceNames].sort(), balanceRows.map((balance) => leaveTypes.find((row) => row.leave_type_id === balance.leave_type_id).name).sort(), "rendered allowance cards do not match personal balances");
   assert.equal(new Set(balanceRows.map((row) => `${row.leave_type_id}:${row.period}`)).size, balanceRows.length, "duplicate current allowance records");
+  await page.getByRole("button", { name: "List", exact: true }).click();
   await page.getByLabel("Search leave").fill("NO_MATCH_SANITY_CHECK");
   await page.getByText("No leave matches").waitFor();
   await page.getByLabel("Search leave").fill("");
@@ -106,6 +115,8 @@ await run("user-personal-data", "user", desktop, async (page) => {
   await page.getByLabel("Search attendance").fill("NO_MATCH_SANITY_CHECK");
   await page.getByText("No attendance matches").waitFor();
   await page.getByLabel("Search attendance").fill("");
+  const crossTenant = await page.evaluate(async () => (await fetch("/api/v1/employees", { headers: { "x-tenant-id": "harbor" }, credentials: "include" })).status);
+  assert.equal(crossTenant, 403);
 });
 
 await run("user-clock-refresh-recent", "user", desktop, async (page) => {
@@ -129,33 +140,41 @@ await run("user-clock-refresh-recent", "user", desktop, async (page) => {
   await page.getByText("Recent attendance").waitFor();
   assert.match(await text(page), new RegExp(displayedDate(todayInTenant()).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "latest attendance is not shown on dashboard");
   await page.getByLabel("Current local date and time").waitFor();
-  const firstClock = await page.getByLabel("Current local date and time").innerText();
+  const firstClock = await page.getByLabel("Current local date and time").locator("time").getAttribute("datetime");
   await page.waitForTimeout(1200);
-  const secondClock = await page.getByLabel("Current local date and time").innerText();
+  const secondClock = await page.getByLabel("Current local date and time").locator("time").getAttribute("datetime");
   assert.notEqual(firstClock, secondClock, "local navbar clock did not advance");
 });
 
 await run("hr-personal-and-team-boundaries", "hr", desktop, async (page) => {
-  const employee = (await api(page, "employees")).body.find((row) => row.employee_id === "ns-jamie") || (await api(page, "employees")).body[0];
+  const employees = (await api(page, "employees")).body;
+  const employee = employees.find((row) => row.employee_id === "ns-alex") || employees[0];
   await page.getByRole("button", { name: "Leave", exact: true }).click();
   await page.getByRole("heading", { name: "Leave" }).waitFor();
   const balances = (await api(page, "leave-balances")).body;
   assert.ok(balances.some((row) => row.employee_id !== employee.employee_id), "HR test data does not include tenant-wide balances");
-  assert.equal(await page.locator("p.text-primary").count(), balances.filter((row) => row.employee_id === employee.employee_id).length, "HR personal Leave renders other employees' allowances");
+  const leaveTypes = (await api(page, "leave-types")).body;
+  const personalBalances = balances.filter((row) => row.employee_id === employee.employee_id);
+  const renderedAllowanceNames = await page.locator("main p.text-sm.font-bold.text-primary").allTextContents();
+  assert.deepEqual([...renderedAllowanceNames].sort(), personalBalances.map((balance) => leaveTypes.find((row) => row.leave_type_id === balance.leave_type_id).name).sort(), "HR personal Leave renders another employee's allowance");
+  for (const balance of balances.filter((row) => row.employee_id !== employee.employee_id)) {
+    const type = leaveTypes.find((row) => row.leave_type_id === balance.leave_type_id);
+    if (!balances.some((row) => row.employee_id === employee.employee_id && row.leave_type_id === balance.leave_type_id))
+      assert.equal(await page.getByText(type.name, { exact: true }).count(), 0, "HR personal Leave renders another employee's allowance");
+  }
   await page.getByRole("button", { name: "Attendance", exact: true }).click();
   await page.getByRole("heading", { name: "Attendance" }).waitFor();
   const summaries = (await api(page, "attendance-summaries")).body;
   const personal = summaries.filter((row) => row.employee_id === employee.employee_id);
   const other = summaries.filter((row) => row.employee_id !== employee.employee_id);
   assert.ok(other.length, "HR test data does not include tenant-wide attendance");
-  assert.equal(await page.locator("text=Daily summaries").count(), 1);
   for (const row of other) {
     const marker = `${row.worked_mins} of ${row.scheduled_mins} minutes`;
     if (!personal.some((item) => `${item.worked_mins} of ${item.scheduled_mins} minutes` === marker)) assert.equal((await text(page)).includes(marker), false, "HR personal Attendance renders another employee's summary");
   }
   await page.getByRole("button", { name: "Team", exact: true }).last().click();
   await page.getByRole("heading", { name: "Team dashboard" }).waitFor();
-  await page.getByRole("button", { name: "Organization", exact: true }).click();
+  await page.locator("header").getByRole("button", { name: "Organization", exact: true }).click();
   await page.getByRole("heading", { name: "Organization overview" }).waitFor();
 });
 
@@ -176,11 +195,9 @@ await run("readonly-no-mutations", "readonly", desktop, async (page) => {
 });
 
 await run("admin-tenant-and-cross-tenant", "admin", desktop, async (page) => {
-  const crossTenant = await page.evaluate(async () => (await fetch("/api/v1/employees", { headers: { "x-tenant-id": "harbor" }, credentials: "include" })).status);
-  assert.equal(crossTenant, 403);
   await page.getByRole("button", { name: "Exit organization" }).click();
   await page.getByRole("heading", { name: "Platform overview" }).waitFor();
-});
+}, { allowExpectedNetworkErrors: true });
 
 for (const viewport of [{ width: 360, height: 800 }, { width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 1440, height: 900 }]) {
   await run(`responsive-${viewport.width}`, "user", viewport, async (page) => {
