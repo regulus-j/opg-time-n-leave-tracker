@@ -374,9 +374,18 @@ function Dashboard({
     (item) =>
       item.status === "open" && item.employee_id === employee?.employee_id,
   );
-  const summaries = data["attendance-summaries"];
-  const balances = data["leave-balances"];
-  const requests = data["leave-requests"];
+  const summaries = data["attendance-summaries"].filter(
+    (item) => item.employee_id === employee?.employee_id,
+  );
+  const balances = data["leave-balances"].filter(
+    (item) => item.employee_id === employee?.employee_id,
+  );
+  const requests = data["leave-requests"].filter(
+    (item) => item.employee_id === employee?.employee_id,
+  );
+  const recentSummaries = [...summaries].sort((left, right) =>
+    right.local_date.localeCompare(left.local_date),
+  );
   const [tick, setTick] = useState(Date.now());
   useEffect(() => {
     if (!open) return;
@@ -499,7 +508,7 @@ function Dashboard({
         <CardContent>
           {summaries.length ? (
             <div className="divide-y">
-              {summaries.slice(0, 5).map((item) => (
+              {recentSummaries.slice(0, 5).map((item) => (
                 <button
                   onClick={() => onNavigate("attendance")}
                   className="flex w-full items-center justify-between gap-3 py-3 text-left hover:text-primary"
