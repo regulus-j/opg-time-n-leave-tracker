@@ -603,6 +603,9 @@ function Attendance({ data, employee, refresh, notify, canWrite }) {
     .filter((item) => statusFilter === "all" || item.status === statusFilter)
     .filter((item) => `${item.local_date} ${item.status} ${item.exception_codes?.join(" ") || ""}`.toLowerCase().includes(query.toLowerCase()))
     .sort((left, right) => right.local_date.localeCompare(left.local_date));
+  const personalAdjustments = data["attendance-adjustments"].filter(
+    (item) => item.employee_id === employee?.employee_id,
+  );
   const pageCount = Math.max(1, Math.ceil(summaries.length / pageSize));
   const visibleSummaries = summaries.slice((page - 1) * pageSize, page * pageSize);
   const calendarDate = new Date();
@@ -638,9 +641,9 @@ function Attendance({ data, employee, refresh, notify, canWrite }) {
             <CardTitle>Daily summaries</CardTitle>
           </CardHeader>
           <CardContent>
-            {data["attendance-summaries"].length ? (
+            {summaries.length ? (
               <div className="divide-y">
-                {data["attendance-summaries"].map((item) => (
+                {summaries.map((item) => (
                   <div
                     className="flex justify-between gap-3 py-3"
                     key={item.summary_id}
@@ -668,9 +671,9 @@ function Attendance({ data, employee, refresh, notify, canWrite }) {
             <CardTitle>Correction requests</CardTitle>
           </CardHeader>
           <CardContent>
-            {data["attendance-adjustments"].length ? (
+            {personalAdjustments.length ? (
               <div className="divide-y">
-                {data["attendance-adjustments"].map((item) => (
+                {personalAdjustments.map((item) => (
                   <div
                     className="flex justify-between gap-3 py-3"
                     key={item.adjustment_id}
@@ -930,7 +933,7 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
           <CardTitle>Request history</CardTitle>
         </CardHeader>
         <CardContent>
-          {data["leave-requests"].length ? (
+          {personalRequests.length ? (
             <div className="divide-y">
               {visibleLeaveRows.map((item) => (
                 <div
@@ -3571,7 +3574,7 @@ function Shell({ user, data, loading, error, refresh, logout, onContextChange })
               {tenant?.name || "Organization"}
             </p>
           </div>
-          <div className="hidden text-sm font-semibold text-muted-foreground md:block" aria-label="Current local date and time">
+          <div className="shrink-0 text-right text-[11px] font-semibold text-muted-foreground sm:text-sm" aria-label="Current local date and time">
             <LocalDateTime />
           </div>
           {user.actor_kind === "platform" && user.active_tenant_id && <Button variant="outline" size="sm" onClick={exitTenant}>Exit organization</Button>}
