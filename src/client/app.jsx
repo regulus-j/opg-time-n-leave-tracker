@@ -738,10 +738,21 @@ function Attendance({ data, employee, refresh, notify, canWrite }) {
 }
 
 function Leave({ data, employee, refresh, notify, canWrite }) {
+  // HR can load tenant-wide data for team and organization workspaces, but
+  // this page is the signed-in employee's personal leave workspace.
+  const personalBalances = data["leave-balances"].filter(
+    (item) => item.employee_id === employee.employee_id,
+  );
+  const personalLedgerEntries = data["leave-ledger-entries"].filter(
+    (item) => item.employee_id === employee.employee_id,
+  );
+  const personalRequests = data["leave-requests"].filter(
+    (item) => item.employee_id === employee.employee_id,
+  );
   const [modal, setModal] = useState(false);
   const [busy, setBusy] = useState(false);
   const eligibleTypeIds = new Set(
-    data["leave-balances"].map((item) => item.leave_type_id),
+    personalBalances.map((item) => item.leave_type_id),
   );
   const types = data["leave-types"].filter(
     (item) =>
@@ -801,7 +812,7 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
     chargeableDays(form.start_date, form.end_date, data.holidays) -
       (form.partial_day === "none" ? 0 : 0.5),
   );
-  const selectedBalance = data["leave-balances"].find(
+  const selectedBalance = personalBalances.find(
     (item) => item.leave_type_id === form.leave_type_id,
   );
   const withdraw = async (item) => {
@@ -824,7 +835,7 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
   const [monthOffset, setMonthOffset] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const leaveRows = data["leave-requests"]
+  const leaveRows = personalRequests
     .filter((item) => statusFilter === "all" || item.status === statusFilter)
     .filter((item) => `${typeName(item.leave_type_id)} ${item.reason} ${item.start_date} ${item.end_date}`.toLowerCase().includes(query.toLowerCase()))
     .sort((left, right) => right.start_date.localeCompare(left.start_date));
@@ -851,9 +862,9 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
           {view === "calendar" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{leaveCalendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Leave calendar">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: leaveDays }, (_, index) => { const localDate = `${leaveCalendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = leaveRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); return <div key={localDate} className={`min-h-16 rounded-md border p-2 text-xs ${matches.some((item) => item.status === "approved") ? "bg-emerald-50 text-emerald-800" : matches.length ? "bg-amber-50 text-amber-800" : "bg-white"}`}><b>{index + 1}</b><span className="mt-1 block">{matches.length ? `${matches.length} request(s)` : "Available"}</span></div>; })}</div></div> : <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead><tr className="border-b">{["Leave type","Dates","Charge","Reason","Status"].map((label) => <th className="p-3" key={label}>{label}</th>)}</tr></thead><tbody>{visibleLeaveRows.map((item) => <tr className="border-b" key={item.request_id}><td className="p-3">{typeName(item.leave_type_id)}</td><td className="p-3">{date(item.start_date)} – {date(item.end_date)}</td><td className="p-3">{item.chargeable_amount}</td><td className="max-w-xs truncate p-3">{item.reason}</td><td className="p-3"><Status value={item.status} /></td></tr>)}</tbody></table>{!visibleLeaveRows.length && <Empty title="No leave matches" detail="Clear the search or status filter." />}<Pagination page={page} pageCount={leavePageCount} pageSize={pageSize} total={leaveRows.length} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></div>}
         </CardContent>
       </Card>
-      {data["leave-balances"].length ? (
+      {personalBalances.length ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {data["leave-balances"].map((item) => (
+          {personalBalances.map((item) => (
             <Card key={item.balance_id}>
               <CardContent className="pt-6">
                 <p className="text-sm font-bold text-primary">
@@ -877,7 +888,7 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
                     <Row label="As of" value={date(item.as_of)} />
                   </div>
                   <div className="mt-3 divide-y">
-                    {data["leave-ledger-entries"]
+                    {personalLedgerEntries
                       .filter(
                         (entry) =>
                           entry.employee_id === item.employee_id &&
@@ -3119,6 +3130,20 @@ function Header({ title, detail, action }) {
     </div>
   );
 }
+
+function LocalDateTime() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const formatted = new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(now);
+  return <time dateTime={now.toISOString()}>{formatted}</time>;
+}
+
 function Field({ label, onChange, ...props }) {
   return (
     <label className="block text-sm font-semibold">
@@ -3536,6 +3561,9 @@ function Shell({ user, data, loading, error, refresh, logout, onContextChange })
             <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
               {tenant?.name || "Organization"}
             </p>
+          </div>
+          <div className="hidden text-sm font-semibold text-muted-foreground md:block" aria-label="Current local date and time">
+            <LocalDateTime />
           </div>
           {user.actor_kind === "platform" && user.active_tenant_id && <Button variant="outline" size="sm" onClick={exitTenant}>Exit organization</Button>}
           {(isManager || isHr) && !platformGlobal && (
