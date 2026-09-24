@@ -65,7 +65,7 @@ async function run(name, persona, viewport, fn, options = {}) {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
     assert.equal(overflow, false, "unexpected horizontal overflow");
     const unexpectedConsoleErrors = options.allowExpectedNetworkErrors
-      ? consoleErrors.filter((error) => !error.includes("401"))
+      ? consoleErrors.filter((error) => !error.includes("401") && !error.includes("403"))
       : consoleErrors;
     const unexpectedRequestFailures = options.allowExpectedNetworkErrors
       ? requestFailures.filter((failure) => !failure.includes("/auth/logout"))
@@ -112,12 +112,13 @@ await run("user-personal-data", "user", desktop, async (page) => {
   await page.getByLabel("Search leave").fill("");
   await page.getByRole("button", { name: "Attendance", exact: true }).click();
   await page.getByRole("heading", { name: "Attendance" }).waitFor();
+  await page.getByRole("button", { name: "Table", exact: true }).click();
   await page.getByLabel("Search attendance").fill("NO_MATCH_SANITY_CHECK");
   await page.getByText("No attendance matches").waitFor();
   await page.getByLabel("Search attendance").fill("");
   const crossTenant = await page.evaluate(async () => (await fetch("/api/v1/employees", { headers: { "x-tenant-id": "harbor" }, credentials: "include" })).status);
   assert.equal(crossTenant, 403);
-});
+}, { allowExpectedNetworkErrors: true });
 
 await run("user-clock-refresh-recent", "user", desktop, async (page) => {
   const clock = page.getByRole("button", { name: /Clock (in|out)/i });
