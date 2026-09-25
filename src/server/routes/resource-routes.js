@@ -22,7 +22,7 @@ export const resourceRoutes = (
       send(service.getResource(resource)),
     );
     if (
-      !["attendance-summaries", "leave-balances", "audit-events"].includes(
+      !["tenants", "attendance-summaries", "leave-balances", "audit-events"].includes(
         resource,
       )
     ) {

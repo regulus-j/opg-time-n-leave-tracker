@@ -29,7 +29,9 @@ Configure the project with:
 - Preview variables: staging Supabase and staging secrets
 - Production variables: production Supabase and production secrets
 
-Required server-side variables include `DATABASE_URL`, `DB_SSL=true`, `DB_SSL_REJECT_UNAUTHORIZED=true`, `DB_POOL_MAX=1`, `JWT_SECRET`, `CSRF_SECRET`, `COOKIE_SECRET`, `COOKIE_SECURE=true`, `COOKIE_SAME_SITE=lax`, and the configured timeout/rate-limit values. Do not prefix these with `VITE_`.
+Required server-side variables include `DATABASE_URL`, `DB_SSL=true`, `DB_SSL_REJECT_UNAUTHORIZED=true`, `DB_POOL_MAX=1`, `JWT_SECRET`, `CSRF_SECRET`, `COOKIE_SECRET`, `COOKIE_SECURE=true`, `COOKIE_SAME_SITE=lax`, `INVITATION_BASE_URL`, `INVITATION_DELIVERY_URL`, and the configured timeout/rate-limit values. Do not prefix these with `VITE_`.
+
+`INVITATION_DELIVERY_URL` is a server-side webhook used when a platform administrator provisions an organization. It receives a JSON payload containing `to`, `organization_name`, `invite_url`, and `expires_at`. The application stores only a SHA-256 token hash, so the webhook must deliver the link immediately. Invitation acceptance is available at `/#/accept-invitation`; there is no public organization signup flow.
 
 If the Vercel function reports `SELF_SIGNED_CERT_IN_CHAIN`, download the Supabase root certificate from Database Settings → SSL Configuration. Add it to Vercel as `DB_SSL_CA` (preserving PEM newlines) or as `DB_SSL_CA_BASE64` using a base64-encoded PEM. Keep `DB_SSL_REJECT_UNAUTHORIZED=true`; do not bypass certificate verification in Production.
 

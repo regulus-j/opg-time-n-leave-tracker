@@ -1,6 +1,5 @@
 import { HttpError } from "../views/problem-view.js";
 import { verifySession, verifyCsrf } from "../services/auth-service.js";
-import { pool } from "../config/database.js";
 
 export const requireAuth = async (req, _res, next) => {
   const external = process.env.AUTH_ADAPTER_MODULE;
@@ -32,6 +31,7 @@ export const requireAuth = async (req, _res, next) => {
       ),
     );
   try {
+    const { pool } = await import("../config/database.js");
     const token = req.signedCookies?.tlt_session || req.cookies?.tlt_session;
     if (!token)
       throw new HttpError(

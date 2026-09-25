@@ -99,7 +99,21 @@ export const api = {
       method: "POST",
       body: { tenant_id },
     }),
+  acceptInvitation: (token: string, password: string) =>
+    request<AuthContext>("/auth/invitations/accept", {
+      method: "POST",
+      body: { token, password },
+    }),
   platformTenants: () => request<Array<Record<string, unknown>>>('/platform/tenants'),
+  createPlatformTenant: (body: Record<string, unknown>) =>
+    request<Record<string, unknown>>('/platform/tenants', { method: 'POST', body }),
+  updatePlatformTenant: (tenant_id: string, body: Record<string, unknown>) =>
+    request<Record<string, unknown>>(`/platform/tenants/${tenant_id}`, { method: 'PUT', body }),
+  resendPlatformInvitation: (tenant_id: string, reason?: string) =>
+    request<Record<string, unknown>>(`/platform/tenants/${tenant_id}/invitation/resend`, {
+      method: 'POST',
+      body: { reason },
+    }),
   platformAccess: () => request<Array<Record<string, unknown>>>('/platform/access'),
   platformAudit: () => request<Array<Record<string, unknown>>>('/platform/audit-events'),
   platformSettings: () => request<Array<Record<string, unknown>>>('/platform/settings'),

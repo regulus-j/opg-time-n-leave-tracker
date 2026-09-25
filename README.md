@@ -26,7 +26,7 @@ Development credentials are configured through `SEED_ADMIN_PASSWORD`, `SEED_HR_P
 | `user@dev.local`     | Operational user     |
 | `readonly@dev.local` | Read-only user       |
 
-Passwords are read from the seed-password variables; development-only examples are in `.env.example`. Sessions use HttpOnly cookies and CSRF protection. The platform administrator must explicitly enter a tenant before accessing organization data. The client retains only a non-sensitive session-presence hint locally.
+Passwords are read from the seed-password variables; development-only examples are in `.env.example`. Sessions use HttpOnly cookies and CSRF protection. The platform administrator must explicitly enter a tenant before accessing organization data. New organizations are provisioned by the platform administrator; companies do not self-register. The initial HR administrator receives a one-time invitation link, and the client retains only a non-sensitive session-presence hint locally.
 
 HR administrators can manage Departments and the Employee Directory, provision portal accounts, update reporting assignments, reset credentials without seeing passwords, export filtered audit CSV, and generate tenant-wide payroll-preparation summaries. Payroll exports include worked minutes, overtime, approved paid leave, and approved unpaid leave for the selected date range; they do not execute payroll.
 
@@ -43,6 +43,8 @@ Docker exposes development PostgreSQL on port `55432` and isolated test PostgreS
 - `npm run audit:security` — check cookie, CSRF, problem-response, and credential configuration.
 
 File uploads remain metadata-only until a storage provider is selected.
+
+Organization onboarding requires `INVITATION_DELIVERY_URL` and `INVITATION_BASE_URL` in production. The delivery endpoint receives the recipient, organization name, expiry, and one-time invitation URL; the database stores only a hash of the invitation token. Organization suspension is reversible and preserves historical records; hard deletion is not supported.
 
 Production startup fails closed unless database TLS, secure cookies, and independent JWT, CSRF, and cookie secrets are configured. Production secrets must contain at least 32 characters.
 

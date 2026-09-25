@@ -10,16 +10,20 @@ const sslCa = process.env.DB_SSL_CA_BASE64
 // explicit `ssl` object below. That would silently discard DB_SSL_CA. Keep
 // DATABASE_URL compatible with Supabase while making certificate verification
 // controlled by the server environment instead of URL query-string state.
-const connectionUrl = new URL(process.env.DATABASE_URL);
-for (const parameter of ["sslmode", "sslrootcert", "sslcert", "sslkey"]) {
-  connectionUrl.searchParams.delete(parameter);
+const connectionUrl = process.env.DATABASE_URL
+  ? new URL(process.env.DATABASE_URL)
+  : null;
+if (connectionUrl) {
+  for (const parameter of ["sslmode", "sslrootcert", "sslcert", "sslkey"]) {
+    connectionUrl.searchParams.delete(parameter);
+  }
 }
 pg.types.setTypeParser(1700, (value) => Number(value));
 pg.types.setTypeParser(1082, (value) => value);
 pg.types.setTypeParser(1114, (value) => `${value.replace(" ", "T")}Z`);
 pg.types.setTypeParser(1184, (value) => new Date(value).toISOString());
 export const pool = new Pool({
-  connectionString: connectionUrl.toString(),
+  ...(connectionUrl ? { connectionString: connectionUrl.toString() } : {}),
   max: Number(process.env.DB_POOL_MAX || 10),
   connectionTimeoutMillis: Number(process.env.DB_CONNECTION_TIMEOUT_MS || 5000),
   idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS || 30000),

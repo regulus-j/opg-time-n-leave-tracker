@@ -3,6 +3,11 @@ import jwt from "jsonwebtoken";
 import crypto from "node:crypto";
 import { HttpError } from "../views/problem-view.js";
 
+const withTransaction = async (fn) => {
+  const database = await import("../config/database.js");
+  return database.withTransaction(fn);
+};
+
 const secret = () => {
   if (!process.env.JWT_SECRET && process.env.NODE_ENV === "production")
     throw new Error("JWT_SECRET is required in production.");
@@ -39,6 +44,62 @@ export const verifyCsrf = (token, value) => {
   } catch {
     return false;
   }
+};
+
+const invitationHash = (token) =>
+  crypto.createHash("sha256").update(token).digest("hex");
+
+export const acceptInvitation = async (token, password) => {
+  if (typeof token !== "string" || token.length < 32)
+    throw new HttpError(422, "Invalid Invitation", "The invitation token is invalid.");
+  if (typeof password !== "string" || password.length < 12)
+    throw new HttpError(422, "Invalid Password", "The password must be at least 12 characters.");
+  return withTransaction(async (client) => {
+    const result = await client.query(
+      `SELECT i.invite_id, i.tenant_id, i.email, i.expires_at, i.accepted_at, i.revoked_at,
+              u.user_id, u.employee_id, u.status AS user_status
+         FROM tenant_invitations i
+         JOIN users u ON u.tenant_id=i.tenant_id AND u.user_id=i.user_id
+        WHERE i.token_hash=$1
+        FOR UPDATE`,
+      [invitationHash(token)],
+    );
+    const invitation = result.rows[0];
+    if (!invitation)
+      throw new HttpError(400, "Invalid Invitation", "The invitation link is invalid or has expired.");
+    if (invitation.accepted_at || invitation.revoked_at || new Date(invitation.expires_at).getTime() <= Date.now())
+      throw new HttpError(400, "Invalid Invitation", "The invitation link is invalid or has expired.");
+    const passwordHash = await hashPassword(password);
+    try {
+      await client.query(
+        "INSERT INTO auth_credentials (user_id,tenant_id,email,password_hash) VALUES ($1,$2,$3,$4)",
+        [invitation.user_id, invitation.tenant_id, invitation.email, passwordHash],
+      );
+    } catch (error) {
+      if (error.code === "23505")
+        throw new HttpError(409, "Account Already Active", "This invitation can no longer be accepted.");
+      throw error;
+    }
+    await client.query(
+      "UPDATE users SET status='active' WHERE tenant_id=$1 AND user_id=$2",
+      [invitation.tenant_id, invitation.user_id],
+    );
+    await client.query(
+      "UPDATE employees SET status='active' WHERE tenant_id=$1 AND employee_id=$2",
+      [invitation.tenant_id, invitation.employee_id],
+    );
+    await client.query(
+      "UPDATE tenant_invitations SET accepted_at=now() WHERE invite_id=$1",
+      [invitation.invite_id],
+    );
+    await client.query(
+      `INSERT INTO audit_events
+        (event_id,tenant_id,actor_user_id,actor_role,action,target_type,target_id,occurred_at,reason,metadata)
+       VALUES ($1,$2,$3,'tenant_admin','invitation_accepted','User',$3,now(),'Initial HR administrator invitation accepted',$4::jsonb)`,
+      [crypto.randomUUID(), invitation.tenant_id, invitation.user_id, JSON.stringify({ invite_id: invitation.invite_id })],
+    );
+    return { email: invitation.email };
+  });
 };
 
 export const authenticate = async (client, email, password) => {

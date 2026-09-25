@@ -65,7 +65,6 @@ const seed = async () => {
         "Alexandra Reyes",
         "admin@dev.local",
         [
-          "tenants:write",
           "users:write",
           "employees:write",
           "departments:write",

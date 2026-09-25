@@ -1,6 +1,7 @@
 import { pool } from "../config/database.js";
 import {
   authenticate,
+  acceptInvitation as acceptInvitationService,
   issueSession,
   issueCsrf,
   signCsrf,
@@ -25,6 +26,33 @@ const csrfOptions = () => ({
   path: "/",
 });
 
+const setAuthCookies = (res, actor) => {
+  const csrf = issueCsrf();
+  res.cookie("tlt_session", issueSession(actor), cookieOptions());
+  res.cookie("tlt_csrf", csrf, csrfOptions());
+  res.cookie("tlt_csrf_signature", signCsrf(csrf), {
+    ...cookieOptions(),
+    httpOnly: true,
+    signed: true,
+  });
+  return csrf;
+};
+
+const authPayload = (actor, csrf) => ({
+  user_id: actor.user_id,
+  tenant_id: actor.tenant_id,
+  employee_id: actor.employee_id,
+  display_name: actor.display_name,
+  email: actor.email,
+  capabilities: actor.capabilities,
+  actor_kind: actor.actor_kind,
+  roles: actor.roles,
+  memberships: actor.memberships,
+  active_tenant_id: actor.active_tenant_id,
+  status: actor.status,
+  csrf_token: csrf,
+});
+
 export const login = async (req, res) => {
   if (
     typeof req.body?.email !== "string" ||
@@ -41,28 +69,15 @@ export const login = async (req, res) => {
     req.body.password,
   );
   clearLoginRateLimit(req);
-  const csrf = issueCsrf();
-  res.cookie("tlt_session", issueSession(actor), cookieOptions());
-  res.cookie("tlt_csrf", csrf, csrfOptions());
-  res.cookie("tlt_csrf_signature", signCsrf(csrf), {
-    ...cookieOptions(),
-    httpOnly: true,
-    signed: true,
-  });
-  return {
-    user_id: actor.user_id,
-    tenant_id: actor.tenant_id,
-    employee_id: actor.employee_id,
-    display_name: actor.display_name,
-    email: actor.email,
-    capabilities: actor.capabilities,
-    actor_kind: actor.actor_kind,
-    roles: actor.roles,
-    memberships: actor.memberships,
-    active_tenant_id: actor.active_tenant_id,
-    status: actor.status,
-    csrf_token: csrf,
-  };
+  return authPayload(actor, setAuthCookies(res, actor));
+};
+
+export const acceptInvitation = async (req, res) => {
+  if (typeof req.body?.token !== "string" || typeof req.body?.password !== "string")
+    throw new HttpError(422, "Invalid Request", "Invitation token and password are required.");
+  const accepted = await acceptInvitationService(req.body.token, req.body.password);
+  const actor = await authenticate(pool, accepted.email, req.body.password);
+  return authPayload(actor, setAuthCookies(res, actor));
 };
 
 export const me = async (req) => {
@@ -121,9 +136,9 @@ export const context = async (req, res) => {
     `SELECT m.tenant_id, m.tenant_user_id, m.roles, m.status,
             u.employee_id, u.display_name, u.email, u.capabilities
        FROM platform_memberships m
-       JOIN users u ON u.tenant_id = m.tenant_id AND u.user_id = m.tenant_user_id
+       LEFT JOIN users u ON u.tenant_id = m.tenant_id AND u.user_id = m.tenant_user_id
       WHERE m.platform_user_id = $1 AND ($2::text IS NULL OR m.tenant_id = $2)
-        AND m.status = 'active' AND u.status = 'active'`,
+        AND m.status = 'active' AND (m.tenant_user_id IS NULL OR u.user_id IS NOT NULL)`,
     [req.actor.platform_user_id || req.actor.user_id, tenantId],
   );
   if (tenantId !== null && !result.rowCount)

@@ -3180,7 +3180,7 @@ function Row({ label, value }) {
   );
 }
 
-function PlatformOverview({ onEnter, notify }) {
+function PlatformOverviewLegacy({ onEnter, notify }) {
   const [tenants, setTenants] = useState([]);
   const [access, setAccess] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3239,6 +3239,84 @@ function PlatformOverview({ onEnter, notify }) {
       <p className="text-sm text-muted-foreground">Platform actions are audited separately from tenant HR activity.</p>
     </div>
   );
+}
+
+function PlatformOverview({ onEnter, notify }) {
+  const [tenants, setTenants] = useState([]);
+  const [access, setAccess] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("all");
+  const [modal, setModal] = useState(null);
+  const [form, setForm] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const defaults = () => ({ tenant_id: "", name: "", timezone: "Asia/Manila", locale: "en-PH", week_start: "1", currency: "PHP", support_email: "", initial_admin: { display_name: "", email: "" } });
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [tenantRows, accessRows] = await Promise.all([api.platformTenants(), api.platformAccess()]);
+      setTenants(tenantRows);
+      setAccess(accessRows);
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const rows = tenants.filter((tenant) => (status === "all" || tenant.status === status) && `${tenant.name} ${tenant.tenant_id}`.toLowerCase().includes(query.toLowerCase()));
+  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const close = () => { setModal(null); setForm(null); };
+  const openCreate = () => { setForm(defaults()); setModal("create"); };
+  const openEdit = (tenant) => { setForm({ ...defaults(), ...tenant, support_email: tenant.settings?.support_email || "" }); setModal("edit"); };
+  const save = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      if (modal === "create") {
+        const created = await api.createPlatformTenant({ ...form, week_start: Number(form.week_start), initial_admin: form.initial_admin, support_email: form.support_email || undefined });
+        notify(created.invitation_delivery === "sent" ? "Organization created and invitation sent." : created.invitation_delivery === "failed" ? "Organization created, but the invitation could not be delivered. Use Resend invite after checking delivery configuration." : "Organization created. Invitation delivery is not configured.");
+      } else {
+        await api.updatePlatformTenant(form.tenant_id, { name: form.name, timezone: form.timezone, locale: form.locale, week_start: Number(form.week_start), currency: form.currency, support_email: form.support_email || undefined });
+        notify("Organization details updated.");
+      }
+      close();
+      await load();
+    } catch (failure) {
+      notify(failure.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const changeStatus = async (tenant) => {
+    const next = tenant.status === "active" ? "suspended" : "active";
+    if (!window.confirm(`${next === "suspended" ? "Suspend" : "Reactivate"} ${tenant.name}?`)) return;
+    try {
+      await api.updatePlatformTenantStatus(tenant.tenant_id, next, `Platform administrator changed organization status to ${next}`);
+      notify(`${tenant.name} is now ${next}.`);
+      await load();
+    } catch (failure) { notify(failure.message, "error"); }
+  };
+  const resend = async (tenant) => {
+    try {
+      const result = await api.resendPlatformInvitation(tenant.tenant_id, "Platform administrator resent the HR invitation");
+      notify(result.invitation_delivery === "sent" ? "Invitation resent." : result.invitation_delivery === "failed" ? "Invitation refreshed, but delivery failed." : "Invitation refreshed; delivery is not configured.");
+      await load();
+    } catch (failure) { notify(failure.message, "error"); }
+  };
+  if (loading) return <Loading />;
+  if (error) return <ErrorState message={error} retry={load} />;
+  return <div className="space-y-5">
+    <Header title="Platform overview" detail="Global organization and access control plane." action={<Button onClick={openCreate}>Create organization</Button>} />
+    <div className="grid gap-4 sm:grid-cols-3"><Metric value={tenants.length} label="Organizations" /><Metric value={tenants.filter((item) => item.status === "active").length} label="Active organizations" /><Metric value={access.length} label="Tenant access assignments" /></div>
+    <Card><CardHeader><CardTitle>Organizations</CardTitle><CardDescription>Create and maintain organizations here. Companies do not self-register.</CardDescription></CardHeader><CardContent className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row"><Field label="Search organizations" value={query} onChange={setQuery} /><label className="text-sm font-semibold">Status<select aria-label="Organization status" value={status} onChange={(event) => setStatus(event.target.value)} className="mt-2 h-11 rounded-lg border bg-white px-3"><option value="all">All statuses</option><option value="active">Active</option><option value="suspended">Suspended</option></select></label></div>
+      {rows.length ? rows.map((tenant) => <div key={tenant.tenant_id} className="flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><h2>{tenant.name}</h2><p className="text-sm text-muted-foreground">{tenant.tenant_id} · {tenant.active_employees} active employees · {tenant.pending_requests} pending requests</p><p className="mt-1 text-xs text-muted-foreground">HR invitation: {tenant.invitation?.status ? `${human(tenant.invitation.status)}${tenant.invitation.email ? ` · ${tenant.invitation.email}` : ""}` : "Not created"}</p></div><div className="flex flex-wrap gap-2"><Status value={tenant.status} /><Button size="sm" onClick={() => onEnter(tenant.tenant_id)}>Enter</Button><Button size="sm" variant="outline" onClick={() => openEdit(tenant)}>Edit</Button><Button size="sm" variant="outline" onClick={() => changeStatus(tenant)}>{tenant.status === "active" ? "Suspend" : "Reactivate"}</Button>{tenant.invitation?.status !== "accepted" ? <Button size="sm" variant="outline" onClick={() => resend(tenant)}>Resend invite</Button> : null}</div></div>) : <Empty title="No organizations match" detail="Clear the search or status filter." />}
+    </CardContent></Card><p className="text-sm text-muted-foreground">Platform actions are audited separately from tenant HR activity.</p>
+    {modal ? <Modal title={modal === "create" ? "Create organization" : `Edit ${form.name}`} close={close}><form className="space-y-4" onSubmit={save}><div className="grid gap-3 sm:grid-cols-2">{modal === "create" ? <Field label="Organization ID" required pattern="[a-z0-9][a-z0-9-]{1,47}" value={form.tenant_id} onChange={(value) => update("tenant_id", value.toLowerCase())} /> : <Field label="Organization ID" value={form.tenant_id} disabled onChange={() => {}} />}<Field label="Organization name" required value={form.name} onChange={(value) => update("name", value)} /></div><div className="grid gap-3 sm:grid-cols-2"><Field label="Timezone" required value={form.timezone} onChange={(value) => update("timezone", value)} /><Field label="Locale" required value={form.locale} onChange={(value) => update("locale", value)} /></div><div className="grid gap-3 sm:grid-cols-2"><Field label="Currency" required value={form.currency} onChange={(value) => update("currency", value.toUpperCase())} /><label className="text-sm font-semibold">Week starts<select aria-label="Week starts" value={form.week_start} onChange={(event) => update("week_start", event.target.value)} className="mt-2 h-11 w-full rounded-lg border bg-white px-3"><option value="0">Sunday</option><option value="1">Monday</option><option value="6">Saturday</option></select></label></div><Field label="Support email" type="email" value={form.support_email} onChange={(value) => update("support_email", value)} />{modal === "create" ? <div className="space-y-3 rounded-xl border bg-muted/30 p-4"><p className="font-semibold">Initial HR administrator</p><Field label="Full name" required value={form.initial_admin.display_name} onChange={(value) => setForm((current) => ({ ...current, initial_admin: { ...current.initial_admin, display_name: value } }))} /><Field label="Email" type="email" required value={form.initial_admin.email} onChange={(value) => setForm((current) => ({ ...current, initial_admin: { ...current.initial_admin, email: value } }))} /><p className="text-xs text-muted-foreground">The administrator receives a one-time invitation link. No password is shown to the platform administrator.</p></div> : null}<Button className="w-full" disabled={busy}>{busy ? "Saving…" : "Save organization"}</Button></form></Modal> : null}
+  </div>;
 }
 
 function PlatformAccess() {
@@ -3639,6 +3717,34 @@ function Shell({ user, data, loading, error, refresh, logout, onContextChange })
   );
 }
 
+function InvitationAccept({ onLogin }) {
+  const token = new URLSearchParams(window.location.hash.split("?")[1] || "").get("token") || "";
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async (event) => {
+    event.preventDefault();
+    if (password !== confirm) {
+      setError("The passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const account = await api.acceptInvitation(token, password);
+      localStorage.setItem("tlt_has_session", "1");
+      onLogin(account);
+      window.location.hash = "/app/dashboard";
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#fff8ed] p-5"><Card className="relative w-full max-w-md border-orange-200/70 shadow-2xl shadow-orange-950/10"><CardHeader><div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl bg-primary font-bold text-white">TL</div><div><p className="text-sm font-semibold text-primary">OPG Workforce</p><p className="text-xs text-muted-foreground">Organization invitation</p></div></div><div><h1 className="text-3xl">Set up your account</h1><CardDescription className="mt-2">Create a password to activate your HR administrator access.</CardDescription></div></CardHeader><CardContent><form className="space-y-4" onSubmit={submit}>{!token ? <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">This invitation link is missing its token.</p> : null}<Field label="Password" type="password" minLength="12" required value={password} onChange={setPassword} /><Field label="Confirm password" type="password" minLength="12" required value={confirm} onChange={setConfirm} />{error ? <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}<Button className="w-full" disabled={busy || !token}>{busy ? "Activating…" : "Activate account"}</Button></form></CardContent></Card></main>;
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
@@ -3724,6 +3830,7 @@ function App() {
         </div>
       </main>
     );
+  const isInvitationRoute = window.location.hash.startsWith("#/accept-invitation");
   return user ? (
     <Shell
       user={user}
@@ -3734,6 +3841,8 @@ function App() {
       logout={logout}
       onContextChange={setUser}
     />
+  ) : isInvitationRoute ? (
+    <InvitationAccept onLogin={setUser} />
   ) : (
     <Login onLogin={setUser} />
   );

@@ -169,6 +169,85 @@ test(
       });
     assert.equal(directory.status, 201);
     assert.equal(Object.prototype.hasOwnProperty.call(directory.body, "password"), false);
+
+    process.env.NODE_ENV = "test";
+    process.env.INVITATION_TEST_TOKEN = "test-invitation-token-12345678901234567890";
+    const tenantId = `browser-${Date.now()}`;
+    const provisioned = await admin
+      .post("/api/v1/auth/context")
+      .set("x-csrf-token", context.body.csrf_token)
+      .send({ tenant_id: null });
+    assert.equal(provisioned.status, 200);
+    const provision = await admin
+      .post("/api/v1/platform/tenants")
+      .set("x-csrf-token", provisioned.body.csrf_token)
+      .send({
+        tenant_id: tenantId,
+        name: "Browser Provisioned Organization",
+        timezone: "Asia/Manila",
+        locale: "en-PH",
+        week_start: 1,
+        currency: "PHP",
+        initial_admin: { display_name: "Invited HR Admin", email: `invite-${Date.now()}@dev.local` },
+      });
+    assert.equal(provision.status, 201);
+    assert.equal(provision.body.tenant_id, tenantId);
+    assert.equal(provision.body.invitation.status, "pending");
+    assert.equal(Object.prototype.hasOwnProperty.call(provision.body, "invite_token"), false);
+
+    const duplicate = await admin
+      .post("/api/v1/platform/tenants")
+      .set("x-csrf-token", provisioned.body.csrf_token)
+      .send({
+        tenant_id: tenantId,
+        name: "Duplicate Organization",
+        timezone: "Asia/Manila",
+        locale: "en-PH",
+        week_start: 1,
+        currency: "PHP",
+        initial_admin: { display_name: "Another Admin", email: `another-${Date.now()}@dev.local` },
+      });
+    assert.equal(duplicate.status, 409);
+
+    const edited = await admin
+      .put(`/api/v1/platform/tenants/${tenantId}`)
+      .set("x-csrf-token", provisioned.body.csrf_token)
+      .send({ name: "Edited Browser Organization", reason: "Integration edit" });
+    assert.equal(edited.status, 200);
+    assert.equal(edited.body.name, "Edited Browser Organization");
+
+    const suspended = await admin
+      .put(`/api/v1/platform/tenants/${tenantId}/status`)
+      .set("x-csrf-token", provisioned.body.csrf_token)
+      .send({ status: "suspended", reason: "Integration status test" });
+    assert.equal(suspended.status, 200);
+    const reactivated = await admin
+      .put(`/api/v1/platform/tenants/${tenantId}/status`)
+      .set("x-csrf-token", provisioned.body.csrf_token)
+      .send({ status: "active", reason: "Integration status restore" });
+    assert.equal(reactivated.status, 200);
+
+    const invitationAgent = request.agent(app);
+    const accepted = await invitationAgent
+      .post("/api/v1/auth/invitations/accept")
+      .send({ token: process.env.INVITATION_TEST_TOKEN, password: "Invited-HR-password-2026!" });
+    assert.equal(accepted.status, 200);
+    assert.equal(accepted.body.tenant_id, tenantId);
+    assert.ok(accepted.body.roles.includes("HR Manager"));
+    const invitedEmployees = await invitationAgent.get("/api/v1/employees");
+    assert.equal(invitedEmployees.status, 200);
+    assert.ok(invitedEmployees.body.every((row) => row.tenant_id === tenantId));
+    const tenantUserPlatformAccess = await invitationAgent.get("/api/v1/platform/tenants");
+    assert.equal(tenantUserPlatformAccess.status, 403);
+    const platformAudit = await pool.query(
+      "SELECT action FROM platform_audit_events WHERE target_id=$1 ORDER BY occurred_at",
+      [tenantId],
+    );
+    assert.deepEqual(
+      platformAudit.rows.map(({ action }) => action),
+      ["tenant_created", "tenant_invitation_created", "tenant_updated", "tenant_suspended", "tenant_reactivated"],
+    );
+    delete process.env.INVITATION_TEST_TOKEN;
     await pool.end();
   },
 );
