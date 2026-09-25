@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   AlertCircle,
@@ -184,13 +184,32 @@ function Login({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
   const [busy, setBusy] = useState(false);
+  const emailRef = useRef(null);
+  const passwordRef = useRef(null);
   const submit = async (event) => {
     event.preventDefault();
+    const nextErrors = {};
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail) nextErrors.email = "Enter your email address.";
+    else if (!/^\S+@\S+\.\S+$/.test(normalizedEmail))
+      nextErrors.email = "Enter an email address in the format name@example.com.";
+    if (!password) nextErrors.password = "Enter your password.";
+    if (Object.keys(nextErrors).length) {
+      setFieldErrors(nextErrors);
+      setError("");
+      window.setTimeout(() => {
+        if (nextErrors.email) emailRef.current?.focus();
+        else passwordRef.current?.focus();
+      }, 0);
+      return;
+    }
     setBusy(true);
     setError("");
+    setFieldErrors({});
     try {
-      const account = await api.login(email.trim(), password);
+      const account = await api.login(normalizedEmail, password);
       localStorage.setItem("tlt_has_session", "1");
       onLogin(account);
     } catch (failure) {
@@ -226,30 +245,48 @@ function Login({ onLogin }) {
           </div>
         </CardHeader>
         <CardContent>
-          <form className="space-y-4" onSubmit={submit}>
-            <label className="block text-sm font-semibold">
+          <form className="space-y-4" onSubmit={submit} noValidate>
+            <label className="block text-sm font-semibold" htmlFor="login-email">
               Email
               <input
+                id="login-email"
+                ref={emailRef}
                 aria-label="Email"
+                aria-invalid={Boolean(fieldErrors.email)}
+                aria-describedby={fieldErrors.email ? "login-email-error" : undefined}
                 autoComplete="email"
                 type="email"
                 required
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-2 h-11 w-full rounded-lg border bg-white px-3 outline-none focus:ring-2 focus:ring-primary"
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setFieldErrors((current) => ({ ...current, email: "" }));
+                  setError("");
+                }}
+                className={`mt-2 h-11 w-full rounded-lg border bg-white px-3 outline-none focus:ring-2 ${fieldErrors.email ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"}`}
               />
+              {fieldErrors.email ? <p id="login-email-error" role="alert" className="mt-1 text-sm font-normal text-red-700">{fieldErrors.email}</p> : null}
             </label>
-            <label className="block text-sm font-semibold">
+            <label className="block text-sm font-semibold" htmlFor="login-password">
               Password
               <input
+                id="login-password"
+                ref={passwordRef}
                 aria-label="Password"
+                aria-invalid={Boolean(fieldErrors.password)}
+                aria-describedby={fieldErrors.password ? "login-password-error" : undefined}
                 autoComplete="current-password"
                 type="password"
                 required
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="mt-2 h-11 w-full rounded-lg border bg-white px-3 outline-none focus:ring-2 focus:ring-primary"
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setFieldErrors((current) => ({ ...current, password: "" }));
+                  setError("");
+                }}
+                className={`mt-2 h-11 w-full rounded-lg border bg-white px-3 outline-none focus:ring-2 ${fieldErrors.password ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"}`}
               />
+              {fieldErrors.password ? <p id="login-password-error" role="alert" className="mt-1 text-sm font-normal text-red-700">{fieldErrors.password}</p> : null}
             </label>
             {error && (
               <div
@@ -271,7 +308,7 @@ function Login({ onLogin }) {
             </Button>
           </form>
           <p className="mt-5 text-center text-xs text-muted-foreground">
-            Development credentials are configured in your local environment.
+            Use your organization account credentials.
           </p>
         </CardContent>
       </Card>
@@ -344,15 +381,57 @@ function Status({ value }) {
   );
 }
 function Modal({ title, close, children }) {
+  const dialogRef = useRef(null);
+  const titleId = useId();
+  const returnFocusRef = useRef(null);
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    returnFocusRef.current = document.activeElement;
+    const dialog = dialogRef.current;
+    if (!dialog) return undefined;
+    const focusableSelector = "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex=\"-1\"])";
+    const firstField = dialog.querySelector("form input:not([disabled]), form select:not([disabled]), form textarea:not([disabled])");
+    (firstField || dialog.querySelector(focusableSelector))?.focus();
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = [...dialog.querySelectorAll(focusableSelector)].filter((element) => element.offsetParent !== null);
+      if (!focusable.length) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    dialog.addEventListener("keydown", handleKeyDown);
+    return () => {
+      dialog.removeEventListener("keydown", handleKeyDown);
+      if (returnFocusRef.current instanceof HTMLElement) returnFocusRef.current.focus();
+    };
+  }, []);
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-50 grid place-items-center bg-black/45 p-4"
       role="dialog"
       aria-modal="true"
+      aria-labelledby={titleId}
     >
       <Card className="max-h-[90vh] w-full max-w-lg overflow-auto shadow-2xl">
         <CardHeader className="flex-row items-center justify-between">
-          <CardTitle>{title}</CardTitle>
+          <CardTitle id={titleId}>{title}</CardTitle>
           <Button
             aria-label="Close dialog"
             variant="ghost"
@@ -716,7 +795,7 @@ function Attendance({ data, employee, refresh, notify, canWrite, canRequestOvert
           title="Request attendance correction"
           close={() => setModal(false)}
         >
-          <form onSubmit={submit} className="space-y-4">
+          <form onSubmit={submit} className="space-y-4" noValidate>
             <Field
               label="Date"
               type="date"
@@ -741,6 +820,7 @@ function Attendance({ data, employee, refresh, notify, canWrite, canRequestOvert
               label="Reason"
               value={form.reason}
               required
+              helperText="Explain what needs correcting and, if relevant, what caused the mismatch."
               onChange={(v) => setForm({ ...form, reason: v })}
             />
             <Button disabled={busy} className="w-full">
@@ -829,6 +909,8 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
   );
   const [modal, setModal] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [formErrors, setFormErrors] = useState({});
+  const formRef = useRef(null);
   const eligibleTypeIds = new Set(
     personalBalances.map((item) => item.leave_type_id),
   );
@@ -845,18 +927,54 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
     partial_end_time: "10:00",
     reason: "",
   });
+  const updateForm = (patch) => {
+    setForm((current) => ({ ...current, ...patch }));
+    setFormErrors((current) => {
+      const next = { ...current };
+      Object.keys(patch).forEach((key) => delete next[key]);
+      if ("start_date" in patch || "end_date" in patch) {
+        delete next.dateRange;
+      }
+      if ("partial_start_time" in patch || "partial_end_time" in patch) {
+        delete next.partial_end_time;
+      }
+      delete next.form;
+      return next;
+    });
+  };
+  const validateForm = () => {
+    const next = {};
+    if (!form.leave_type_id) next.leave_type_id = "Choose a leave type.";
+    if (!form.start_date) next.start_date = "Choose a start date.";
+    if (!form.end_date) next.end_date = "Choose an end date.";
+    if (form.start_date && form.end_date && form.end_date < form.start_date) {
+      next.end_date = "The To date must be on or after the From date.";
+    } else if (form.partial_day === "custom_hours" && form.start_date && form.end_date && form.start_date !== form.end_date) {
+      next.end_date = "Custom-hour leave must use the same date for From and To.";
+    } else if (form.partial_day === "custom_hours" && customMinutes <= 0) {
+      next.partial_end_time = "End time must be later than start time.";
+    } else if (form.start_date && form.end_date && form.partial_day !== "custom_hours" && projectedDays <= 0) {
+      next.dateRange = "Choose at least one working day; weekends and holidays are not chargeable."
+    }
+    if (!form.reason.trim()) next.reason = "Explain why you need this leave.";
+    return next;
+  };
   useEffect(() => {
     if (types[0] && !form.leave_type_id)
       setForm((value) => ({ ...value, leave_type_id: types[0].leave_type_id }));
   }, [types, form.leave_type_id]);
   const submit = async (event) => {
     event.preventDefault();
+    const nextErrors = validateForm();
+    if (Object.keys(nextErrors).length) {
+      setFormErrors(nextErrors);
+      window.setTimeout(() => {
+        formRef.current?.querySelector("[aria-invalid=\"true\"]")?.focus();
+      }, 0);
+      return;
+    }
     setBusy(true);
     try {
-      if (projectedDays <= 0)
-        throw new Error("Choose a period containing chargeable working time.");
-      if (form.partial_day === "custom_hours" && form.start_date !== form.end_date)
-        throw new Error("Custom-hour leave must use the same From and To date.");
       const row = await api.create("leave-requests", {
         employee_id: employee.employee_id,
         leave_type_id: form.leave_type_id,
@@ -885,6 +1003,7 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
       setModal(false);
       await refresh();
     } catch (e) {
+      setFormErrors({ form: e.message });
       notify(e.message, "error");
     } finally {
       setBusy(false);
@@ -946,7 +1065,7 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
         detail="View balances and submit time-away requests."
         action={
           canWrite ? (
-            <Button onClick={() => setModal(true)}>Request leave</Button>
+            <Button onClick={() => { setFormErrors({}); setModal(true); }}>Request leave</Button>
           ) : null
         }
       />
@@ -1051,16 +1170,20 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
       </Card>
       {modal && (
         <Modal title="Request leave" close={() => setModal(false)}>
-          <form onSubmit={submit} className="space-y-4">
+          <form ref={formRef} onSubmit={submit} className="space-y-4" noValidate>
             <label className="block text-sm font-semibold">
               Leave type
               <select
+                id="leave-type"
+                aria-label="Leave type"
+                aria-invalid={Boolean(formErrors.leave_type_id)}
+                aria-describedby={formErrors.leave_type_id ? "leave-type-error" : undefined}
                 required
                 value={form.leave_type_id}
                 onChange={(e) =>
-                  setForm({ ...form, leave_type_id: e.target.value })
+                  updateForm({ leave_type_id: e.target.value })
                 }
-                className="mt-2 h-11 w-full rounded-lg border bg-white px-3"
+                className={`mt-2 h-11 w-full rounded-lg border bg-white px-3 ${formErrors.leave_type_id ? "border-red-500" : ""}`}
               >
                 {types.map((type) => (
                   <option key={type.leave_type_id} value={type.leave_type_id}>
@@ -1068,6 +1191,7 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
                   </option>
                 ))}
               </select>
+              {formErrors.leave_type_id ? <p id="leave-type-error" role="alert" className="mt-1 text-sm font-normal text-red-700">{formErrors.leave_type_id}</p> : null}
             </label>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field
@@ -1075,7 +1199,8 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
                 type="date"
                 value={form.start_date}
                 required
-                onChange={(v) => setForm({ ...form, start_date: v })}
+                error={formErrors.start_date}
+                onChange={(v) => updateForm({ start_date: v })}
               />
               <Field
                 label="To"
@@ -1083,7 +1208,8 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
                 value={form.end_date}
                 required
                 min={form.start_date || undefined}
-                onChange={(v) => setForm({ ...form, end_date: v })}
+                error={formErrors.end_date || formErrors.dateRange}
+                onChange={(v) => updateForm({ end_date: v })}
               />
             </div>
             <label className="block text-sm font-semibold">
@@ -1092,7 +1218,7 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
                 aria-label="Leave duration"
                 value={form.partial_day}
                 onChange={(e) =>
-                  setForm({ ...form, partial_day: e.target.value })
+                  updateForm({ partial_day: e.target.value })
                 }
                 className="mt-2 h-11 w-full rounded-lg border bg-white px-3"
               >
@@ -1104,8 +1230,8 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
             </label>
             {form.partial_day === "custom_hours" && (
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Partial start" type="time" required value={form.partial_start_time} onChange={(value) => setForm({ ...form, partial_start_time: value })} />
-                <Field label="Partial end" type="time" required value={form.partial_end_time} onChange={(value) => setForm({ ...form, partial_end_time: value })} />
+                <Field label="Partial start" type="time" required value={form.partial_start_time} onChange={(value) => updateForm({ partial_start_time: value })} />
+                <Field label="Partial end" type="time" required value={form.partial_end_time} error={formErrors.partial_end_time} onChange={(value) => updateForm({ partial_end_time: value })} />
                 <p className="text-xs text-muted-foreground sm:col-span-2">Times use the organization timezone. Custom-hour leave must use the same date.</p>
               </div>
             )}
@@ -1113,19 +1239,24 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
               label="Reason"
               value={form.reason}
               required
-              onChange={(v) => setForm({ ...form, reason: v })}
+              helperText="Briefly explain why you need leave; include relevant context your approver should know."
+              error={formErrors.reason}
+              onChange={(v) => updateForm({ reason: v })}
             />
             <div className="rounded-lg bg-muted p-4 text-sm">
               <b>Request preview</b>
-              <p className="mt-1">Projected charge: {projectedDays.toFixed(2)} {selectedType?.unit || "unit"}</p>
+              <p className="mt-1">Projected charge: {!form.start_date || !form.end_date || formErrors.dateRange || formErrors.end_date ? "Enter a valid working-day range" : `${projectedDays.toFixed(2)} ${selectedType?.unit || "unit"}`}</p>
               <p>
                 Projected remaining:{" "}
-                {selectedBalance
+                {!form.start_date || !form.end_date || formErrors.dateRange || formErrors.end_date
+                  ? "—"
+                  : selectedBalance
                   ? selectedBalance.remaining - projectedDays
                   : "Unavailable"}
               </p>
             </div>
-            <Button disabled={busy || !types.length} className="w-full">
+            {formErrors.form ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{formErrors.form}</p> : null}
+            <Button disabled={busy || !types.length} aria-busy={busy} className="w-full">
               {busy ? "Submitting…" : "Submit request"}
             </Button>
           </form>
@@ -3291,16 +3422,27 @@ function LocalDateTime() {
   return <time dateTime={now.toISOString()}>{formatted}</time>;
 }
 
-function Field({ label, onChange, ...props }) {
+function Field({ label, onChange, error, helperText, id, className, ...props }) {
+  const generatedId = useId();
+  const inputId = id || `field-${generatedId.replace(/:/g, "")}`;
+  const helperId = helperText ? `${inputId}-help` : "";
+  const errorId = error ? `${inputId}-error` : "";
+  const { ["aria-describedby"]: externalDescribedBy, ...inputProps } = props;
+  const describedBy = [externalDescribedBy, helperId, errorId].filter(Boolean).join(" ") || undefined;
   return (
-    <label className="block text-sm font-semibold">
+    <label className="block text-sm font-semibold" htmlFor={inputId}>
       {label}
       <input
+        id={inputId}
         aria-label={label}
+        aria-invalid={Boolean(error)}
+        aria-describedby={describedBy}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-2 h-11 w-full rounded-lg border bg-white px-3 outline-none focus:ring-2 focus:ring-primary"
-        {...props}
+        className={`mt-2 h-11 w-full rounded-lg border bg-white px-3 outline-none focus:ring-2 ${error ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"} ${className || ""}`}
+        {...inputProps}
       />
+      {helperText ? <p id={helperId} className="mt-1 text-xs font-normal text-muted-foreground">{helperText}</p> : null}
+      {error ? <p id={errorId} role="alert" className="mt-1 text-sm font-normal text-red-700">{error}</p> : null}
     </label>
   );
 }
