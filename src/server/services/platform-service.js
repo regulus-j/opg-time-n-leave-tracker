@@ -218,6 +218,8 @@ export const createTenant = async (req) => {
     const usedEmail = await client.query(
       `SELECT 1 FROM users WHERE lower(email)=lower($1)
        UNION ALL SELECT 1 FROM auth_credentials WHERE lower(email)=lower($1)
+       UNION ALL SELECT 1 FROM platform_users WHERE lower(email)=lower($1)
+       UNION ALL SELECT 1 FROM platform_credentials WHERE lower(email)=lower($1)
        LIMIT 1`,
       [adminEmail],
     );
