@@ -146,6 +146,18 @@ export const resetPassword = async (req) => withTransaction(async (client) => {
   return { employee_id: req.params.employee_id, user_id: userId, reset: true, reset_at: resetAt };
 });
 
+export const getOwnJobProfile = async (req) => withTransaction(async (client) => {
+  const result = await client.query(
+    `SELECT j.job_id, j.title, j.standard_daily_mins, j.standard_weekly_mins, j.is_ot_eligible, j.max_daily_mins
+       FROM employees e
+       JOIN job_profiles j ON j.tenant_id=e.tenant_id AND j.job_id=e.job_id
+      WHERE e.tenant_id=$1 AND e.employee_id=$2`,
+    [req.tenantId, req.actor.employee_id],
+  );
+  if (!result.rowCount) throw new HttpError(404, "Not Found", "The employee job profile was not found.");
+  return result.rows[0];
+});
+
 const localTimeMinutes = (value, field) => {
   if (typeof value !== "string" || !/^\d{2}:\d{2}$/.test(value))
     throw new HttpError(422, "Invalid Request", `${field} must use HH:MM format.`);

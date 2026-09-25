@@ -35,7 +35,6 @@ const employeeResources = [
   "attendance-sessions",
   "attendance-summaries",
   "attendance-adjustments",
-  "job-profiles",
   "leave-types",
   "leave-balances",
   "leave-ledger-entries",
@@ -56,7 +55,7 @@ const administratorResources = [
   "audit-events",
 ];
 const resourceNames = [...employeeResources, ...administratorResources];
-const emptyData = Object.fromEntries(resourceNames.map((name) => [name, []]));
+const emptyData = { ...Object.fromEntries(resourceNames.map((name) => [name, []])), "job-profile": null };
 
 const human = (value = "") =>
   value
@@ -894,7 +893,7 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
   const typeName = (id) =>
     types.find((type) => type.leave_type_id === id)?.name || "Leave";
   const selectedType = types.find((type) => type.leave_type_id === form.leave_type_id);
-  const selectedJob = data["job-profiles"].find((job) => job.job_id === employee?.job_id);
+  const selectedJob = data["job-profile"];
   const customMinutes = timeIntervalMinutes(form.partial_start_time, form.partial_end_time);
   const projectedDays = Math.max(
     0,
@@ -3902,14 +3901,16 @@ function App() {
       const selectedResources = user.capabilities.includes("users:write")
         ? resourceNames
         : employeeResources;
-      const values = await Promise.all(
-        selectedResources.map((name) => api.list(name)),
-      );
+      const values = await Promise.all([
+        ...selectedResources.map((name) => api.list(name)),
+        api.myJobProfile(),
+      ]);
       setData({
         ...emptyData,
         ...Object.fromEntries(
           selectedResources.map((name, index) => [name, values[index]]),
         ),
+        "job-profile": values[selectedResources.length],
       });
     } catch (failure) {
       if (failure.status === 401) {
