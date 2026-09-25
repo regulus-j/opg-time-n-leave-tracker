@@ -35,10 +35,12 @@ const employeeResources = [
   "attendance-sessions",
   "attendance-summaries",
   "attendance-adjustments",
+  "job-profiles",
   "leave-types",
   "leave-balances",
   "leave-ledger-entries",
   "leave-requests",
+  "overtime-requests",
   "holidays",
   "alerts",
 ];
@@ -130,6 +132,12 @@ const chargeableDays = (from, to, holidays = []) => {
       total += 1;
   }
   return total;
+};
+const timeIntervalMinutes = (start, end) => {
+  if (!/^\d{2}:\d{2}$/.test(start || "") || !/^\d{2}:\d{2}$/.test(end || "")) return 0;
+  const [startHour, startMinute] = start.split(":").map(Number);
+  const [endHour, endMinute] = end.split(":").map(Number);
+  return endHour * 60 + endMinute - (startHour * 60 + startMinute);
 };
 
 const routePageFromHash = () =>
@@ -536,7 +544,7 @@ function Dashboard({
   );
 }
 
-function Attendance({ data, employee, refresh, notify, canWrite }) {
+function Attendance({ data, employee, refresh, notify, canWrite, canRequestOvertime }) {
   const [modal, setModal] = useState(false);
   const [view, setView] = useState("calendar");
   const [query, setQuery] = useState("");
@@ -619,11 +627,7 @@ function Attendance({ data, employee, refresh, notify, canWrite }) {
       <Header
         title="Attendance"
         detail="Review recorded sessions, daily summaries, and correction requests."
-        action={
-          canWrite ? (
-            <Button onClick={() => setModal(true)}>Request correction</Button>
-          ) : null
-        }
+        action={canWrite ? <Button onClick={() => setModal(true)}>Request correction</Button> : null}
       />
       <Card>
         <CardContent className="space-y-4 pt-6">
@@ -635,6 +639,7 @@ function Attendance({ data, employee, refresh, notify, canWrite }) {
           {view === "calendar" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{monthLabel}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label={`${monthLabel} attendance calendar`}>{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: daysInMonth }, (_, index) => { const localDate = `${calendarKey}-${String(index + 1).padStart(2, "0")}`; const row = data["attendance-summaries"].find((item) => item.employee_id === employee?.employee_id && item.local_date === localDate); return <div key={localDate} className={`min-h-16 rounded-md border p-2 text-xs ${row && row.status !== "complete" ? "border-red-300 bg-red-50 text-red-800" : row ? "bg-emerald-50 text-emerald-800" : "bg-white"}`}><b>{index + 1}</b><span className="mt-1 block">{row ? `${row.worked_mins}m · ${human(row.status)}` : "No record"}</span></div>; })}</div></div> : <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead><tr className="border-b">{["Date","Worked","Scheduled","Overtime","Status"].map((label) => <th className="p-3" key={label}>{label}</th>)}</tr></thead><tbody>{visibleSummaries.map((item) => <tr className="border-b" key={item.summary_id}><td className="p-3">{date(item.local_date)}</td><td className="p-3">{item.worked_mins} min</td><td className="p-3">{item.scheduled_mins} min</td><td className="p-3">{item.overtime_mins} min</td><td className="p-3"><Status value={item.status} /></td></tr>)}</tbody></table>{!visibleSummaries.length && <Empty title="No attendance matches" detail="Clear the search or status filter." />}<Pagination page={page} pageCount={pageCount} pageSize={pageSize} total={summaries.length} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></div>}
         </CardContent>
       </Card>
+      {canRequestOvertime ? <OvertimeRequest data={data} employee={employee} refresh={refresh} notify={notify} /> : null}
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -749,6 +754,68 @@ function Attendance({ data, employee, refresh, notify, canWrite }) {
   );
 }
 
+function OvertimeRequest({ data, employee, refresh, notify }) {
+  const [modal, setModal] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    local_date: new Date().toISOString().slice(0, 10),
+    start_time: "18:00",
+    end_time: "20:00",
+    reason: "",
+  });
+  const requests = data["overtime-requests"].filter((item) => item.employee_id === employee?.employee_id).sort((left, right) => right.local_date.localeCompare(left.local_date));
+  const minutes = timeIntervalMinutes(form.start_time, form.end_time);
+  const submit = async (event) => {
+    event.preventDefault();
+    if (minutes <= 0) {
+      notify("End time must be after start time.", "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      const row = await api.create("overtime-requests", {
+        employee_id: employee.employee_id,
+        local_date: form.local_date,
+        start_time: form.start_time,
+        end_time: form.end_time,
+        requested_mins: minutes,
+        reason: form.reason,
+        status: "draft",
+        approver_id: null,
+        submitted_at: null,
+        decided_at: null,
+        decision_note: null,
+        version: 0,
+        created_at: new Date().toISOString(),
+      });
+      await api.transition(`/overtime-requests/${row.overtime_request_id}/submit`, {}, row.version);
+      notify("Overtime request submitted for approval.");
+      setModal(false);
+      setForm({ ...form, reason: "" });
+      await refresh();
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const withdraw = async (item) => {
+    if (!window.confirm("Withdraw this pending overtime request?")) return;
+    try {
+      await api.transition(`/overtime-requests/${item.overtime_request_id}/withdraw`, {}, item.version);
+      notify("Overtime request withdrawn.");
+      await refresh();
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  };
+  return <>
+    <Button onClick={() => setModal(true)}>Request overtime</Button>
+    {modal ? <Modal title="Request overtime" close={() => setModal(false)}><form onSubmit={submit} className="space-y-4"><Field label="Date" type="date" required value={form.local_date} onChange={(value) => setForm({ ...form, local_date: value })} /><div className="grid gap-3 sm:grid-cols-2"><Field label="Start time" type="time" required value={form.start_time} onChange={(value) => setForm({ ...form, start_time: value })} /><Field label="End time" type="time" required value={form.end_time} onChange={(value) => setForm({ ...form, end_time: value })} /></div><Field label="Reason" required value={form.reason} onChange={(value) => setForm({ ...form, reason: value })} /><div className="rounded-lg bg-muted p-4 text-sm">Requested overtime: <b>{Math.max(0, minutes)} minutes</b><p className="mt-1 text-muted-foreground">Your reporting manager is the normal approver. HR can approve organization-wide requests.</p></div><Button className="w-full" disabled={busy || minutes <= 0}>{busy ? "Submitting…" : "Submit for approval"}</Button></form></Modal> : null}
+    {requests.length ? <Card className="mt-5"><CardHeader><CardTitle>Overtime requests</CardTitle></CardHeader><CardContent className="divide-y">{requests.map((item) => <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between" key={item.overtime_request_id}><div><b>{date(item.local_date)} · {item.start_time.slice(0, 5)}–{item.end_time.slice(0, 5)}</b><small className="block text-muted-foreground">{item.requested_mins} minutes · {item.reason}</small></div><div className="flex items-center gap-2"><Status value={item.status} />{item.status === "pending" ? <Button variant="outline" size="sm" onClick={() => withdraw(item)}>Withdraw</Button> : null}</div></div>)}</CardContent></Card> : null}
+  </>;
+}
+
 function Leave({ data, employee, refresh, notify, canWrite }) {
   // HR can load tenant-wide data for team and organization workspaces, but
   // this page is the signed-in employee's personal leave workspace.
@@ -775,6 +842,8 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
     start_date: "",
     end_date: "",
     partial_day: "none",
+    partial_start_time: "07:00",
+    partial_end_time: "10:00",
     reason: "",
   });
   useEffect(() => {
@@ -787,12 +856,17 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
     try {
       if (projectedDays <= 0)
         throw new Error("Choose a period containing chargeable working time.");
+      if (form.partial_day === "custom_hours" && form.start_date !== form.end_date)
+        throw new Error("Custom-hour leave must use the same From and To date.");
       const row = await api.create("leave-requests", {
         employee_id: employee.employee_id,
         leave_type_id: form.leave_type_id,
         start_date: form.start_date,
         end_date: form.end_date,
         partial_day: form.partial_day,
+        partial_start_time: form.partial_day === "custom_hours" ? form.partial_start_time : null,
+        partial_end_time: form.partial_day === "custom_hours" ? form.partial_end_time : null,
+        partial_minutes: form.partial_day === "custom_hours" ? timeIntervalMinutes(form.partial_start_time, form.partial_end_time) : null,
         chargeable_amount: projectedDays,
         reason: form.reason,
         attachment_ids: [],
@@ -819,10 +893,19 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
   };
   const typeName = (id) =>
     types.find((type) => type.leave_type_id === id)?.name || "Leave";
+  const selectedType = types.find((type) => type.leave_type_id === form.leave_type_id);
+  const selectedJob = data["job-profiles"].find((job) => job.job_id === employee?.job_id);
+  const customMinutes = timeIntervalMinutes(form.partial_start_time, form.partial_end_time);
   const projectedDays = Math.max(
     0,
-    chargeableDays(form.start_date, form.end_date, data.holidays) -
-      (form.partial_day === "none" ? 0 : 0.5),
+    form.partial_day === "custom_hours"
+      ? form.start_date === form.end_date && customMinutes > 0
+        ? selectedType?.unit === "hours"
+          ? customMinutes / 60
+          : customMinutes / Number(selectedJob?.standard_daily_mins || 480)
+        : 0
+      : chargeableDays(form.start_date, form.end_date, data.holidays) -
+        (form.partial_day === "none" ? 0 : 0.5),
   );
   const selectedBalance = personalBalances.find(
     (item) => item.leave_type_id === form.leave_type_id,
@@ -944,7 +1027,8 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
                     <b>{typeName(item.leave_type_id)}</b>
                     <small className="block text-muted-foreground">
                       {date(item.start_date)} – {date(item.end_date)} ·{" "}
-                      {item.reason}
+                      {item.partial_day === "custom_hours" ? `${item.partial_start_time?.slice(0, 5)}–${item.partial_end_time?.slice(0, 5)} · ` : ""}
+                      {item.chargeable_amount} unit(s) · {item.reason}
                     </small>
                   </span>
                   <div className="flex items-center gap-2">
@@ -1016,8 +1100,16 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
                 <option value="none">Full days</option>
                 <option value="start_half">Half day on start</option>
                 <option value="end_half">Half day on end</option>
+                <option value="custom_hours">Custom hours</option>
               </select>
             </label>
+            {form.partial_day === "custom_hours" && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Partial start" type="time" required value={form.partial_start_time} onChange={(value) => setForm({ ...form, partial_start_time: value })} />
+                <Field label="Partial end" type="time" required value={form.partial_end_time} onChange={(value) => setForm({ ...form, partial_end_time: value })} />
+                <p className="text-xs text-muted-foreground sm:col-span-2">Times use the organization timezone. Custom-hour leave must use the same date.</p>
+              </div>
+            )}
             <Field
               label="Reason"
               value={form.reason}
@@ -1026,7 +1118,7 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
             />
             <div className="rounded-lg bg-muted p-4 text-sm">
               <b>Request preview</b>
-              <p className="mt-1">Projected charge: {projectedDays} day(s)</p>
+              <p className="mt-1">Projected charge: {projectedDays.toFixed(2)} {selectedType?.unit || "unit"}</p>
               <p>
                 Projected remaining:{" "}
                 {selectedBalance
@@ -1255,12 +1347,14 @@ function Approvals({ data, refresh, notify }) {
     ...data["attendance-adjustments"]
       .filter((i) => i.status === "pending")
       .map((i) => ({ ...i, kind: "adjustment" })),
+    ...data["overtime-requests"]
+      .filter((i) => i.status === "pending")
+      .map((i) => ({ ...i, kind: "overtime" })),
   ];
   const decide = async (item, decision) => {
     try {
-      const resource =
-        item.kind === "leave" ? "leave-requests" : "attendance-adjustments";
-      const id = item.request_id || item.adjustment_id;
+      const resource = item.kind === "leave" ? "leave-requests" : item.kind === "adjustment" ? "attendance-adjustments" : "overtime-requests";
+      const id = item.request_id || item.adjustment_id || item.overtime_request_id;
       await api.transition(`/${resource}/${id}/${decision}`, {}, item.version);
       notify(
         `${human(item.kind)} ${decision === "approve" ? "approved" : "rejected"}.`,
@@ -1280,13 +1374,14 @@ function Approvals({ data, refresh, notify }) {
       {pending.length ? (
         <div className="space-y-3">
           {pending.map((item) => (
-            <Card key={item.request_id || item.adjustment_id}>
+            <Card key={item.request_id || item.adjustment_id || item.overtime_request_id}>
               <CardContent className="flex flex-col gap-4 pt-6 md:flex-row md:items-center">
                 <div className="flex-1">
                   <p className="text-sm font-bold text-primary">
                     {human(item.kind)}
                   </p>
                   <h2 className="mt-1">{item.reason}</h2>
+                  {item.kind === "overtime" ? <p className="text-sm text-muted-foreground">{date(item.local_date)} · {item.start_time.slice(0, 5)}–{item.end_time.slice(0, 5)} · {item.requested_mins} minutes</p> : null}
                   <p className="text-sm text-muted-foreground">
                     {item.start_date
                       ? `${date(item.start_date)} – ${date(item.end_date)}`
@@ -1324,7 +1419,7 @@ function TeamDashboard({ data, user, onNavigate }) {
   useEffect(() => { load(); }, [load]);
   if (error) return <ErrorState message={error} retry={load} />;
   if (!dashboard) return <Loading />;
-  return <div className="space-y-5"><Header title="Team dashboard" detail="Live direct-report coverage, approvals, and workload signals." /><div className="grid gap-4 sm:grid-cols-3"><Metric value={dashboard.direct_reports} label="Active direct reports" /><Metric value={dashboard.timesheets?.items?.length || 0} label="Recent timesheets" /><Metric value={dashboard.pending_approvals} label="Pending approvals" /></div><div className="grid gap-3 sm:grid-cols-3"><Button variant="outline" onClick={() => onNavigate("whos-in")}>View presence</Button><Button variant="outline" onClick={() => onNavigate("team-calendar")}>Review coverage</Button><Button variant="outline" onClick={() => onNavigate("alerts")}>Open alerts ({dashboard.alerts?.length || 0})</Button></div></div>;
+  return <div className="space-y-5"><Header title="Team dashboard" detail="Live direct-report coverage, approvals, and workload signals." /><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Metric value={dashboard.direct_reports} label="Active direct reports" /><Metric value={dashboard.timesheets?.items?.length || 0} label="Recent timesheets" /><Metric value={dashboard.pending_approvals} label="Pending approvals" /><Metric value={dashboard.pending_overtime_approvals || 0} label="Overtime requests" /></div><div className="grid gap-3 sm:grid-cols-3"><Button variant="outline" onClick={() => onNavigate("whos-in")}>View presence</Button><Button variant="outline" onClick={() => onNavigate("team-calendar")}>Review coverage</Button><Button variant="outline" onClick={() => onNavigate("alerts")}>Open alerts ({dashboard.alerts?.length || 0})</Button></div></div>;
 }
 
 function LegacyTeamDashboard({ data, user, onNavigate }) {
@@ -2369,6 +2464,13 @@ function Overrides({ data, refresh, notify, user }) {
     effective_date: new Date().toISOString().slice(0, 10),
     reason: "",
   });
+  const [timeForm, setTimeForm] = useState({
+    employee_id: "",
+    local_date: new Date().toISOString().slice(0, 10),
+    clock_in_time: "09:00",
+    clock_out_time: "",
+    reason: "",
+  });
   useEffect(() => {
     setForm((value) => ({
       ...value,
@@ -2406,6 +2508,24 @@ function Overrides({ data, refresh, notify, user }) {
       });
       notify("Manual balance adjustment applied.");
       setForm({ ...form, amount: "", reason: "" });
+      await refresh();
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  };
+  const submitTimeOverride = async (e) => {
+    e.preventDefault();
+    if (!window.confirm("Apply this attendance override immediately? Any overlapping session will be voided and preserved in the audit history.")) return;
+    try {
+      const result = await api.createAttendanceOverride({
+        employee_id: timeForm.employee_id || employees[0]?.employee_id,
+        local_date: timeForm.local_date,
+        clock_in_time: timeForm.clock_in_time,
+        clock_out_time: timeForm.clock_out_time || null,
+        reason: timeForm.reason,
+      });
+      notify(result.replaced_session_ids?.length ? "Attendance added and overlapping session replaced." : "Attendance added.");
+      setTimeForm({ ...timeForm, clock_out_time: "", reason: "" });
       await refresh();
     } catch (error) {
       notify(error.message, "error");
@@ -2491,6 +2611,22 @@ function Overrides({ data, refresh, notify, user }) {
           </form>
         </CardContent>
       </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Add employee time</CardTitle>
+          <CardDescription>Immediately record or replace attendance for an employee. Existing overlapping sessions are voided, never deleted.</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-6">
+          <form onSubmit={submitTimeOverride} className="grid gap-4 lg:grid-cols-2">
+            <label className="text-sm font-semibold">Employee<select aria-label="Attendance override employee" required value={timeForm.employee_id || employees[0]?.employee_id || ""} onChange={(e) => setTimeForm({ ...timeForm, employee_id: e.target.value })} className="mt-2 h-11 w-full rounded-lg border bg-white px-3">{employees.map((item) => <option key={item.employee_id} value={item.employee_id}>{item.name}</option>)}</select></label>
+            <Field label="Date" type="date" required value={timeForm.local_date} onChange={(value) => setTimeForm({ ...timeForm, local_date: value })} />
+            <Field label="Clock in" type="time" required value={timeForm.clock_in_time} onChange={(value) => setTimeForm({ ...timeForm, clock_in_time: value })} />
+            <Field label="Clock out (optional)" type="time" value={timeForm.clock_out_time} onChange={(value) => setTimeForm({ ...timeForm, clock_out_time: value })} />
+            <div className="lg:col-span-2"><Field label="Required reason" required value={timeForm.reason} onChange={(value) => setTimeForm({ ...timeForm, reason: value })} /></div>
+            <Button className="lg:col-span-2">Apply attendance override</Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -2520,7 +2656,7 @@ function LegacyOrganizationReports({ data, tenant }) {
   }, [preset, query, status, department, manager, job, location, from, to, sort, page, pageSize]);
   useEffect(() => { load(); }, [load]);
   const download = async () => { try { const result = await api.downloadCsv(`/reports/${preset}.csv?${new URLSearchParams({ q: query, status: status === "all" ? "" : status, department_id: department === "all" ? "" : department, manager_id: manager === "all" ? "" : manager, job_id: job === "all" ? "" : job, location_id: location === "all" ? "" : location, from, to, sort })}`); const link = document.createElement("a"); link.href = URL.createObjectURL(result.blob); link.download = result.filename; link.click(); URL.revokeObjectURL(link.href); } catch (failure) { setError(failure.message); } };
-  const columns = preset === "payroll-timesheet" ? [["name", "Employee"], ["department_name", "Department"], ["manager_name", "Manager"], ["worked_mins", "Worked minutes"], ["overtime_mins", "Overtime minutes"], ["paid_leave_units", "Paid leave"], ["unpaid_leave_units", "Unpaid leave"]] : preset === "organization-absenteeism" ? [["name", "Employee"], ["department_name", "Department"], ["absent_days", "Absent"], ["leave_days", "Approved leave"], ["incomplete_days", "Incomplete"], ["recorded_days", "Recorded days"]] : preset === "overtime-by-department" ? [["department_name", "Department"], ["employee_count", "Employees"], ["overtime_mins", "Overtime minutes"], ["limit_exception_mins", "Limit exceptions"]] : [["name", "Employee"], ["department_name", "Department"], ["leave_type_name", "Leave type"], ["remaining", "Balance"], ["unit", "Unit"], ["estimated_value", "Estimated value"]];
+   const columns = preset === "payroll-timesheet" ? [["name", "Employee"], ["department_name", "Department"], ["manager_name", "Manager"], ["worked_mins", "Worked minutes"], ["overtime_mins", "Attendance OT"], ["approved_overtime_mins", "Approved OT"], ["paid_leave_units", "Paid leave"], ["unpaid_leave_units", "Unpaid leave"]] : preset === "organization-absenteeism" ? [["name", "Employee"], ["department_name", "Department"], ["absent_days", "Absent"], ["leave_days", "Approved leave"], ["incomplete_days", "Incomplete"], ["recorded_days", "Recorded days"]] : preset === "overtime-by-department" ? [["department_name", "Department"], ["employee_count", "Employees"], ["overtime_mins", "Attendance OT"], ["approved_overtime_mins", "Approved OT"], ["limit_exception_mins", "Limit exceptions"]] : [["name", "Employee"], ["department_name", "Department"], ["leave_type_name", "Leave type"], ["remaining", "Balance"], ["unit", "Unit"], ["estimated_value", "Estimated value"]];
   return <div className="space-y-5"><Header title="Organization reports" detail="Tenant-wide reporting for HR and payroll preparation. Exports include every matching row." action={<Button onClick={download} disabled={loading}>Export filtered CSV</Button>} /><div className="flex flex-wrap gap-2">{[["payroll-timesheet", "Payroll timesheet"], ["organization-absenteeism", "Absenteeism"], ["overtime-by-department", "Overtime by department"], ["leave-balance-liability", "Leave liability"]].map(([value, label]) => <Button key={value} variant={preset === value ? "secondary" : "outline"} onClick={() => { setPreset(value); setPage(1); }}>{label}</Button>)}</div><FilterToolbar query={query} onQuery={(value) => { setQuery(value); setPage(1); }} filters={[{ label: "Status", value: status, onChange: (value) => { setStatus(value); setPage(1); }, options: [{ value: "all", label: "All employee statuses" }, { value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }] }, { label: "Department", value: department, onChange: (value) => { setDepartment(value); setPage(1); }, options: [{ value: "all", label: "All departments" }, ...(tenant?.departments || []).map((item) => ({ value: item.department_id, label: item.name }))] }]} onClear={() => { setQuery(""); setStatus("all"); setDepartment("all"); setFrom(`${today.slice(0, 8)}01`); setTo(today); setPage(1); }}><div className="flex gap-2"><label className="text-sm font-semibold">From<input aria-label="Report from" type="date" value={from} onChange={(event) => { setFrom(event.target.value); setPage(1); }} className="mt-2 block h-11 rounded-lg border bg-white px-3" /></label><label className="text-sm font-semibold">To<input aria-label="Report to" type="date" value={to} onChange={(event) => { setTo(event.target.value); setPage(1); }} className="mt-2 block h-11 rounded-lg border bg-white px-3" /></label></div></FilterToolbar>{loading ? <Loading /> : error ? <ErrorState message={error} retry={load} /> : <><Card><CardContent className="space-y-2 pt-6"><p className="font-semibold">{report?.title}</p><p className="text-sm text-muted-foreground">{report?.basis}</p><p className="text-xs text-muted-foreground">{report?.total || 0} matching rows · generated {dateTime(report?.generated_at)} · {report?.tenant?.timezone}</p></CardContent></Card>{report?.items?.length ? <Card><CardContent className="overflow-x-auto p-0"><table className="w-full min-w-[900px] text-left text-sm"><thead><tr className="border-b">{columns.map(([, label]) => <th className="p-4" key={label}>{label}</th>)}</tr></thead><tbody>{report.items.map((row, index) => <tr className="border-b last:border-0" key={`${row.employee_id || row.department_id}-${index}`}>{columns.map(([key]) => <td className="p-4" key={key}>{key.includes("mins") ? `${row[key] || 0} min` : key.includes("days") || key.includes("units") || key === "remaining" || key === "estimated_value" ? row[key] ?? 0 : row[key] || "—"}</td>)}</tr>)}</tbody></table><Pagination page={report.page} pageCount={report.page_count} pageSize={report.page_size} total={report.total} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></CardContent></Card> : <Empty title="No report rows" detail="Adjust the date range or filters." />}</>}</div>;
 }
 
@@ -2594,11 +2730,11 @@ function OrganizationReports({ data, tenant }) {
     }
   };
   const columns = preset === "payroll-timesheet"
-    ? [["name", "Employee"], ["department_name", "Department"], ["manager_name", "Manager"], ["worked_mins", "Worked minutes"], ["overtime_mins", "Overtime minutes"], ["paid_leave_units", "Paid leave"], ["unpaid_leave_units", "Unpaid leave"]]
+     ? [["name", "Employee"], ["department_name", "Department"], ["manager_name", "Manager"], ["worked_mins", "Worked minutes"], ["overtime_mins", "Attendance OT"], ["approved_overtime_mins", "Approved OT"], ["paid_leave_units", "Paid leave"], ["unpaid_leave_units", "Unpaid leave"]]
     : preset === "organization-absenteeism"
       ? [["name", "Employee"], ["department_name", "Department"], ["absent_days", "Absent"], ["leave_days", "Approved leave"], ["incomplete_days", "Incomplete"], ["recorded_days", "Recorded days"]]
       : preset === "overtime-by-department"
-        ? [["department_name", "Department"], ["employee_count", "Employees"], ["overtime_mins", "Overtime minutes"], ["limit_exception_mins", "Limit exceptions"]]
+         ? [["department_name", "Department"], ["employee_count", "Employees"], ["overtime_mins", "Attendance OT"], ["approved_overtime_mins", "Approved OT"], ["limit_exception_mins", "Limit exceptions"]]
         : [["name", "Employee"], ["department_name", "Department"], ["leave_type_name", "Leave type"], ["remaining", "Balance"], ["unit", "Unit"], ["estimated_value", "Estimated value"]];
   const setFilter = (key, value) => setView({ [key]: value, page: "1" });
   return (
@@ -3525,6 +3661,7 @@ function Shell({ user, data, loading, error, refresh, logout, onContextChange })
         refresh={refresh}
         notify={notify}
         canWrite={canClock}
+        canRequestOvertime={user.capabilities.includes("overtime-requests:write")}
       />
     );
   else if (page === "leave")

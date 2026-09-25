@@ -45,5 +45,7 @@ export const dashboard = async (req) => {
   const alerts = await teamAlerts(req);
   const calendar = await teamCalendar(req);
   const timesheets = await teamTimesheets({ ...req, query: { ...req.query, page: 1, page_size: 1 } });
-  return { direct_reports: reportCount.rows[0].total, timesheets, alerts, upcoming_leave: calendar.slice(0, 10), pending_approvals: calendar.filter((item) => item.status === "pending").length };
+  const overtime = await pool.query(`SELECT count(*)::integer AS total FROM overtime_requests o JOIN employees e ON e.tenant_id=o.tenant_id AND e.employee_id=o.employee_id WHERE o.tenant_id=$1 AND o.status='pending' AND ${clause}`, [req.tenantId, ...values]);
+  const pendingLeave = calendar.filter((item) => item.status === "pending").length;
+  return { direct_reports: reportCount.rows[0].total, timesheets, alerts, upcoming_leave: calendar.slice(0, 10), pending_approvals: pendingLeave + overtime.rows[0].total, pending_overtime_approvals: overtime.rows[0].total };
 };

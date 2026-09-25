@@ -171,6 +171,9 @@ const fields = {
     "start_date",
     "end_date",
     "partial_day",
+    "partial_start_time",
+    "partial_end_time",
+    "partial_minutes",
     "chargeable_amount",
     "reason",
     "attachment_ids",
@@ -180,6 +183,23 @@ const fields = {
     "decided_at",
     "decision_note",
     "version",
+  ],
+  OvertimeRequest: [
+    "overtime_request_id",
+    "tenant_id",
+    "employee_id",
+    "local_date",
+    "start_time",
+    "end_time",
+    "requested_mins",
+    "reason",
+    "status",
+    "approver_id",
+    "submitted_at",
+    "decided_at",
+    "decision_note",
+    "version",
+    "created_at",
   ],
   Attachment: [
     "attachment_id",
@@ -243,7 +263,8 @@ test("canonical schema contains exactly the documented entities and fields", () 
   );
   for (const [entity, expected] of Object.entries(fields)) {
     assert.deepEqual(Object.keys(schema.$defs[entity].properties), expected);
-    assert.deepEqual(schema.$defs[entity].required, expected);
+    const optional = entity === "LeaveRequest" ? new Set(["partial_start_time", "partial_end_time", "partial_minutes"]) : new Set();
+    assert.deepEqual(schema.$defs[entity].required, expected.filter((field) => !optional.has(field)));
   }
 });
 

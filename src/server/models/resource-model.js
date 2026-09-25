@@ -32,6 +32,7 @@ export const resources = {
     "entry_id",
   ],
   "leave-requests": ["LeaveRequest", "leave_requests", "request_id"],
+  "overtime-requests": ["OvertimeRequest", "overtime_requests", "overtime_request_id"],
   attachments: ["Attachment", "attachments", "attachment_id"],
   "holiday-calendars": [
     "HolidayCalendar",
@@ -122,6 +123,7 @@ const searchColumns = {
   job_profiles: ["job_id", "title"],
   leave_types: ["leave_type_id", "name", "code", "description"],
   leave_requests: ["request_id", "employee_id", "leave_type_id", "reason", "status"],
+  overtime_requests: ["overtime_request_id", "employee_id", "reason", "status"],
   attendance_summaries: ["summary_id", "employee_id", "status"],
   attendance_adjustments: ["adjustment_id", "employee_id", "reason", "status"],
   attendance_sessions: ["session_id", "employee_id", "status"],

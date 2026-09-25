@@ -679,6 +679,15 @@
         "partial_day": {
           "type": "string"
         },
+        "partial_start_time": {
+          "type": ["string", "null"]
+        },
+        "partial_end_time": {
+          "type": ["string", "null"]
+        },
+        "partial_minutes": {
+          "type": ["integer", "null"]
+        },
         "chargeable_amount": {
           "type": "number"
         },
@@ -727,6 +736,33 @@
         "decided_at",
         "decision_note",
         "version"
+      ],
+      "additionalProperties": false
+    },
+    "OvertimeRequest": {
+      "type": "object",
+      "properties": {
+        "overtime_request_id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "employee_id": { "type": "string" },
+        "local_date": { "type": "string" },
+        "start_time": { "type": "string" },
+        "end_time": { "type": "string" },
+        "requested_mins": { "type": "integer" },
+        "reason": { "type": "string" },
+        "status": { "type": "string" },
+        "approver_id": { "type": ["string", "null"] },
+        "submitted_at": { "type": ["string", "null"] },
+        "decided_at": { "type": ["string", "null"] },
+        "decision_note": { "type": ["string", "null"] },
+        "version": { "type": "integer" },
+        "created_at": { "type": "string" }
+      },
+      "required": [
+        "overtime_request_id", "tenant_id", "employee_id", "local_date",
+        "start_time", "end_time", "requested_mins", "reason", "status",
+        "approver_id", "submitted_at", "decided_at", "decision_note",
+        "version", "created_at"
       ],
       "additionalProperties": false
     },

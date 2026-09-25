@@ -13,6 +13,12 @@ export const transitions = Object.freeze({
     approve: ["pending", "approved"],
     reject: ["pending", "rejected"],
   },
+  overtime: {
+    submit: ["draft", "pending"],
+    withdraw: ["pending", "withdrawn"],
+    approve: ["pending", "approved"],
+    reject: ["pending", "rejected"],
+  },
   alert: {
     acknowledge: ["open", "acknowledged"],
     resolve: ["acknowledged", "resolved"],

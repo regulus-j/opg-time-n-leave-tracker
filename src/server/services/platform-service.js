@@ -69,9 +69,9 @@ const normalizeOrganization = (body, { partial = false } = {}) => {
 };
 
 const hrCapabilities = [
-  "attendance-sessions:write", "attendance-adjustments:write", "attendance:write",
+  "attendance-sessions:write", "attendance-adjustments:write", "attendance:write", "attendance:override",
   "attendance:approve", "leave-requests:write", "leave:write", "leave:approve",
-  "leave:override", "leave-types:write", "job-profiles:write", "job-leave-policies:write",
+  "leave:override", "overtime-requests:write", "overtime:approve", "job-profiles:write", "job-leave-policies:write",
   "employees:write", "users:write", "departments:write", "locations:write",
   "work-schedules:write", "attachments:write", "holiday-calendars:write",
   "holidays:write", "alerts:write",

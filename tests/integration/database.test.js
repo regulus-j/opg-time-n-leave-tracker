@@ -101,7 +101,64 @@ test(
   assert.equal(correctedSession.rows[0].source, "attendance_adjustment");
   const correctedSummary = await pool.query("SELECT worked_mins,status FROM attendance_summaries WHERE tenant_id=$1 AND employee_id=$2 AND local_date=$3", ["northstar", "ns-morgan", "2027-12-01"]);
   assert.deepEqual(correctedSummary.rows[0], { worked_mins: 480, status: "complete" });
-  const audit = await pool.query(
+
+  const partialLeave = await user.post("/api/v1/leave-requests").set("x-csrf-token", userCsrf).send({
+    employee_id: "ns-morgan", leave_type_id: "ns-annual", start_date: "2027-12-08", end_date: "2027-12-08",
+    partial_day: "custom_hours", partial_start_time: "07:00", partial_end_time: "10:00", partial_minutes: 180,
+    chargeable_amount: 0, reason: "Integration custom-hour leave", attachment_ids: [], status: "draft",
+    approver_id: null, submitted_at: null, decided_at: null, decision_note: null, version: 0,
+  });
+  assert.equal(partialLeave.status, 201);
+  const partialSubmitted = await user.post(`/api/v1/leave-requests/${partialLeave.body.request_id}/submit`).set("x-csrf-token", userCsrf).set("if-match", "0").send({});
+  assert.equal(partialSubmitted.status, 200);
+  assert.equal(partialSubmitted.body.partial_minutes, 180);
+  assert.equal(Number(partialSubmitted.body.chargeable_amount), 0.375);
+  const partialApproved = await manager.post(`/api/v1/leave-requests/${partialLeave.body.request_id}/approve`).set("x-csrf-token", managerLogin.body.csrf_token).set("if-match", "1").send({});
+  assert.equal(partialApproved.status, 200);
+
+  const overtime = await user.post("/api/v1/overtime-requests").set("x-csrf-token", userCsrf).send({
+    employee_id: "ns-morgan", local_date: "2027-12-02", start_time: "07:00", end_time: "10:00", requested_mins: 180,
+    reason: "Integration overtime request from a non-eligible job type", status: "draft", approver_id: null,
+    submitted_at: null, decided_at: null, decision_note: null, version: 0, created_at: new Date().toISOString(),
+  });
+  assert.equal(overtime.status, 201);
+  const overtimeSubmitted = await user.post(`/api/v1/overtime-requests/${overtime.body.overtime_request_id}/submit`).set("x-csrf-token", userCsrf).set("if-match", "0").send({});
+  assert.equal(overtimeSubmitted.status, 200);
+  assert.equal(overtimeSubmitted.body.approver_id, "ns-alex");
+  const overtimeApproved = await manager.post(`/api/v1/overtime-requests/${overtime.body.overtime_request_id}/approve`).set("x-csrf-token", managerLogin.body.csrf_token).set("if-match", "1").send({});
+  assert.equal(overtimeApproved.status, 200);
+  const overtimeLedger = await pool.query("SELECT minutes,entry_type FROM overtime_ledger_entries WHERE tenant_id=$1 AND overtime_request_id=$2", ["northstar", overtime.body.overtime_request_id]);
+  assert.deepEqual(overtimeLedger.rows, [{ minutes: 180, entry_type: "approved" }]);
+  const overlapRequest = await user.post("/api/v1/overtime-requests").set("x-csrf-token", userCsrf).send({
+    employee_id: "ns-morgan", local_date: "2027-12-02", start_time: "09:00", end_time: "11:00", requested_mins: 120,
+    reason: "Overlapping request should be rejected", status: "draft", approver_id: null,
+    submitted_at: null, decided_at: null, decision_note: null, version: 0, created_at: new Date().toISOString(),
+  });
+  const overlapSubmitted = await user.post(`/api/v1/overtime-requests/${overlapRequest.body.overtime_request_id}/submit`).set("x-csrf-token", userCsrf).set("if-match", "0").send({});
+  assert.equal(overlapSubmitted.status, 409);
+
+  const hr = request.agent(app);
+  const hrLogin = await hr.post("/api/v1/auth/login").send({ email: "hr@dev.local", password: process.env.SEED_HR_PASSWORD || process.env.SEED_ADMIN_PASSWORD });
+  assert.equal(hrLogin.status, 200);
+  const overrideOpen = await hr.post("/api/v1/hr/attendance-overrides").set("x-csrf-token", hrLogin.body.csrf_token).send({
+    employee_id: "ns-morgan", local_date: "2027-12-04", clock_in_time: "07:00", reason: "Integration manual clock-in override",
+  });
+  assert.equal(overrideOpen.status, 201);
+  assert.equal(overrideOpen.body.session.status, "open");
+  const overrideClosed = await hr.post("/api/v1/hr/attendance-overrides").set("x-csrf-token", hrLogin.body.csrf_token).send({
+    employee_id: "ns-morgan", local_date: "2027-12-04", clock_in_time: "07:30", clock_out_time: "16:30", reason: "Integration replacement attendance interval",
+  });
+  assert.equal(overrideClosed.status, 201);
+  assert.equal(overrideClosed.body.replaced_session_ids.length, 1);
+  const overrideRows = await pool.query("SELECT status,source FROM attendance_sessions WHERE tenant_id=$1 AND employee_id=$2 AND (clock_in_at AT TIME ZONE 'Asia/Manila')::date=$3 ORDER BY clock_in_at", ["northstar", "ns-morgan", "2027-12-04"]);
+  assert.deepEqual(overrideRows.rows, [{ status: "voided", source: "hr_bulk_override" }, { status: "closed", source: "hr_bulk_override" }]);
+  const overrideAudit = await pool.query("SELECT action,metadata FROM audit_events WHERE tenant_id=$1 AND target_id=$2", ["northstar", overrideClosed.body.session.session_id]);
+  assert.equal(overrideAudit.rows.at(-1).action, "attendance_manual_override");
+  assert.equal(overrideAudit.rows.at(-1).metadata.replaced_session_ids.length, 1);
+  const userOverrideForbidden = await user.post("/api/v1/hr/attendance-overrides").set("x-csrf-token", userCsrf).send({ employee_id: "ns-morgan", local_date: "2027-12-05", clock_in_time: "08:00", reason: "Should be forbidden" });
+  assert.equal(userOverrideForbidden.status, 403);
+
+    const audit = await pool.query(
       "SELECT action FROM audit_events WHERE tenant_id = $1 AND target_id = $2 ORDER BY occurred_at",
       ["northstar", created.body.request_id],
     );

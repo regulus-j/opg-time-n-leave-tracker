@@ -18,12 +18,13 @@ const employeeResources = new Set([
   "leave-balances",
   "leave-ledger-entries",
   "leave-requests",
+  "overtime-requests",
   "alerts",
 ]);
 
 const employeeScope = async (client, req) => {
   if (req.actor.capabilities.includes("users:write")) return null;
-  if (req.actor.capabilities.includes("leave:approve")) {
+  if (req.actor.capabilities.includes("leave:approve") || req.actor.capabilities.includes("overtime:approve")) {
     const result = await client.query(
       "SELECT employee_id FROM employees WHERE tenant_id = $1 AND (employee_id = $2 OR manager_id = $2)",
       [req.tenantId, req.actor.employee_id],
@@ -43,6 +44,17 @@ const assertEmployeeScope = async (client, req, employeeId) => {
       "The employee is outside your authorized scope.",
     );
 };
+
+const parseLocalTime = (value, field) => {
+  if (typeof value !== "string" || !/^\d{2}:\d{2}(?::\d{2})?$/.test(value))
+    throw new HttpError(422, "Invalid Request", `${field} must use HH:MM format.`);
+  const [hours, minutes] = value.slice(0, 5).split(":").map(Number);
+  if (hours > 23 || minutes > 59)
+    throw new HttpError(422, "Invalid Request", `${field} is not a valid time.`);
+  return hours * 60 + minutes;
+};
+
+const minutesBetween = (start, end) => parseLocalTime(end, "end_time") - parseLocalTime(start, "start_time");
 
 const assertDomainInvariants = async (
   client,
@@ -130,6 +142,31 @@ const assertDomainInvariants = async (
       "Invalid Leave Period",
       "The end date must not be before the start date.",
     );
+  if (resource === "leave-requests") {
+    if (payload.partial_day === "custom_hours") {
+      if (payload.start_date !== payload.end_date)
+        throw new HttpError(422, "Invalid Leave Period", "Custom-hour leave must use one date.");
+      const minutes = minutesBetween(payload.partial_start_time, payload.partial_end_time);
+      if (minutes <= 0)
+        throw new HttpError(422, "Invalid Leave Period", "The partial leave interval must be positive.");
+      payload.partial_minutes = minutes;
+    } else if (payload.partial_start_time || payload.partial_end_time || (payload.partial_minutes !== null && payload.partial_minutes !== undefined)) {
+      throw new HttpError(422, "Invalid Leave Period", "Partial start and end times are only valid for custom-hour leave.");
+    }
+  }
+  if (resource === "overtime-requests") {
+    if (payload.status !== "draft")
+      throw new HttpError(422, "Invalid Overtime", "New overtime requests must start as drafts.");
+    if (payload.approver_id)
+      throw new HttpError(422, "Invalid Overtime", "The approver is assigned from the employee reporting line.");
+    const minutes = minutesBetween(payload.start_time, payload.end_time);
+    if (minutes <= 0)
+      throw new HttpError(422, "Invalid Overtime", "end_time must be after start_time.");
+    if (Number(payload.requested_mins) !== minutes)
+      throw new HttpError(422, "Invalid Overtime", "requested_mins must match the requested interval.");
+    if (typeof payload.reason !== "string" || !payload.reason.trim())
+      throw new HttpError(422, "Invalid Overtime", "A reason is required.");
+  }
   if (
     ["leave-requests", "attendance-adjustments"].includes(resource) &&
     payload.attachment_ids?.length
@@ -218,6 +255,17 @@ export const createResource = (resource) => async (req) =>
     const payload = { ...req.body, tenant_id: req.tenantId };
     const idField = repository.resources[resource][2];
     if (!payload[idField]) payload[idField] = id();
+    if (resource === "overtime-requests") {
+      payload.status ??= "draft";
+      payload.approver_id ??= null;
+      payload.submitted_at ??= null;
+      payload.decided_at ??= null;
+      payload.decision_note ??= null;
+      payload.version ??= 0;
+      payload.created_at ??= now();
+      if (!req.actor.capabilities.includes("users:write") && payload.employee_id !== req.actor.employee_id)
+        throw new HttpError(403, "Forbidden", "Employees may only submit overtime for themselves.");
+    }
     validateEntity(entityName, payload);
     if (employeeResources.has(resource))
       await assertEmployeeScope(client, req, payload.employee_id);
@@ -352,7 +400,8 @@ export const transition = async (
     current.employee_id &&
     (deciding || current.employee_id !== actor.employeeId)
   ) {
-    const managed = actor.capabilities.includes("leave:approve")
+    const approvalCapability = resource === "overtime-requests" ? "overtime:approve" : "leave:approve";
+    const managed = actor.capabilities.includes(approvalCapability)
       ? await client.query(
           "SELECT 1 FROM employees WHERE tenant_id = $1 AND employee_id = $2 AND manager_id = $3",
           [tenantId, current.employee_id, actor.employeeId],
@@ -398,7 +447,10 @@ export const transition = async (
     ]);
     if (nextStatus === "pending") {
       const policy = await client.query(
-        `SELECT p.* FROM job_leave_policies p
+        `SELECT p.*, lt.unit AS leave_unit, j.standard_daily_mins
+           FROM job_leave_policies p
+          JOIN leave_types lt ON lt.tenant_id=p.tenant_id AND lt.leave_type_id=p.leave_type_id
+          JOIN job_profiles j ON j.tenant_id=p.tenant_id AND j.job_id=p.job_id
           JOIN employees e ON e.tenant_id=p.tenant_id AND e.job_id=p.job_id
          WHERE p.tenant_id=$1 AND e.employee_id=$2 AND p.leave_type_id=$3 AND p.status='active'
            AND p.effective_from <= $4 AND (p.effective_to IS NULL OR p.effective_to >= $5)
@@ -430,9 +482,21 @@ export const transition = async (
                              WHERE e.tenant_id=$3 AND e.employee_id=$4 AND h.status='active' AND h.local_date=day::date)`,
         [current.start_date, current.end_date, tenantId, current.employee_id],
       );
+      if (Number(charge.rows[0].days) <= 0)
+        throw new HttpError(
+          422,
+          "Invalid Leave Period",
+          "The selected period has no chargeable working time.",
+        );
       let amount = Number(charge.rows[0].days);
-      if (["start_half", "end_half"].includes(current.partial_day))
+      if (current.partial_day === "custom_hours") {
+        const partialMinutes = Number(current.partial_minutes || 0);
+        amount = policy.rows[0].leave_unit === "hours"
+          ? partialMinutes / 60
+          : partialMinutes / Number(policy.rows[0].standard_daily_mins || 480);
+      } else if (["start_half", "end_half"].includes(current.partial_day)) {
         amount -= 0.5;
+      }
       if (amount <= 0)
         throw new HttpError(
           422,
@@ -484,8 +548,30 @@ export const transition = async (
         );
     }
   }
+  if (resource === "overtime-requests" && nextStatus === "pending") {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `overtime:${tenantId}:${current.employee_id}:${current.local_date}`,
+    ]);
+    const overlap = await client.query(
+      `SELECT 1 FROM overtime_requests
+        WHERE tenant_id=$1 AND employee_id=$2 AND local_date=$3
+          AND status IN ('pending','approved') AND overtime_request_id<>$4
+          AND start_time < $5::time AND end_time > $6::time
+        LIMIT 1`,
+      [tenantId, current.employee_id, current.local_date, current.overtime_request_id, current.end_time, current.start_time],
+    );
+    if (overlap.rowCount)
+      throw new HttpError(409, "Overlapping Overtime", "The requested overtime interval overlaps another pending or approved request.");
+  }
   const updated = { ...current, status: nextStatus };
   if (nextStatus === "pending") updated.submitted_at = now();
+  if (resource === "overtime-requests" && nextStatus === "pending") {
+    const manager = await client.query(
+      "SELECT manager_id FROM employees WHERE tenant_id=$1 AND employee_id=$2",
+      [tenantId, current.employee_id],
+    );
+    updated.approver_id = manager.rows[0]?.manager_id || null;
+  }
   if (deciding) {
     if ("approver_id" in updated) updated.approver_id = actor.employeeId;
     if ("decided_by" in updated) updated.decided_by = actor.userId;
@@ -500,6 +586,14 @@ export const transition = async (
     updated,
     current.version,
   );
+  if (resource === "overtime-requests" && nextStatus === "approved") {
+    await client.query(
+      `INSERT INTO overtime_ledger_entries
+        (entry_id,tenant_id,overtime_request_id,employee_id,local_date,minutes,entry_type,reason,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,'approved',$7,$8)`,
+      [id(), tenantId, current.overtime_request_id, current.employee_id, current.local_date, current.requested_mins, current.reason, actor.userId],
+    );
+  }
   if (resource === "attendance-adjustments" && nextStatus === "approved") {
     const clockIn = current.proposed?.clock_in || current.proposed?.start;
     const clockOut = current.proposed?.clock_out || current.proposed?.end;

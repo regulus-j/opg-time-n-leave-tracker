@@ -137,6 +137,8 @@ export const api = {
     request<Record<string, unknown>>(`/hr/directory/${employee_id}`, { method: "PUT", body }),
   resetDirectoryPassword: (employee_id: string) =>
     request<Record<string, unknown>>(`/hr/directory/${employee_id}/reset-password`, { method: "POST", body: {} }),
+  createAttendanceOverride: (body: Record<string, unknown>) =>
+    request<Record<string, unknown>>("/hr/attendance-overrides", { method: "POST", body }),
   report: (preset: string, query: Record<string, string | number> = {}) =>
     request<Record<string, unknown>>(`/reports/${preset}?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}`),
   downloadCsv: (path: string) => download(path),

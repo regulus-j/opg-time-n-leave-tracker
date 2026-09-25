@@ -21,7 +21,13 @@ export const resourceRoutes = (
       requireResourceRead(resource),
       send(service.getResource(resource)),
     );
-    if (
+    if (resource === "overtime-requests") {
+      router.post(
+        "/",
+        requireCapability("overtime-requests:write"),
+        send(service.createResource(resource), 201),
+      );
+    } else if (
       !["tenants", "attendance-summaries", "leave-balances", "audit-events"].includes(
         resource,
       )

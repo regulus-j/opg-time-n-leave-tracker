@@ -189,6 +189,9 @@ export interface LeaveRequest {
   start_date: string;
   end_date: string;
   partial_day: "none" | "start_half" | "end_half" | "custom_hours";
+  partial_start_time: string | null;
+  partial_end_time: string | null;
+  partial_minutes: number | null;
   chargeable_amount: number;
   reason: string;
   attachment_ids: string[];
@@ -198,6 +201,23 @@ export interface LeaveRequest {
   decided_at: string | null;
   decision_note: string | null;
   version: number;
+}
+export interface OvertimeRequest {
+  overtime_request_id: string;
+  tenant_id: string;
+  employee_id: string;
+  local_date: string;
+  start_time: string;
+  end_time: string;
+  requested_mins: number;
+  reason: string;
+  status: RequestStatus;
+  approver_id: string | null;
+  submitted_at: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  version: number;
+  created_at: string;
 }
 export interface Attachment {
   attachment_id: string;
@@ -269,6 +289,7 @@ export interface EntityMap {
   "leave-balances": LeaveBalance;
   "leave-ledger-entries": LeaveLedgerEntry;
   "leave-requests": LeaveRequest;
+  "overtime-requests": OvertimeRequest;
   attachments: Attachment;
   "holiday-calendars": HolidayCalendar;
   holidays: Holiday;

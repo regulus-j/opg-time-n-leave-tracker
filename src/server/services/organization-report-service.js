@@ -53,6 +53,11 @@ const payroll = async (req, info, all) => {
               COALESCE(sum(overtime_mins),0)::integer AS overtime_mins,
               array_agg(DISTINCT status ORDER BY status) AS attendance_statuses
        FROM attendance_summaries WHERE tenant_id=$1 AND local_date BETWEEN $2::date AND $3::date GROUP BY employee_id
+     ), approved_overtime AS (
+       SELECT employee_id,COALESCE(sum(minutes),0)::integer AS approved_overtime_mins
+       FROM overtime_ledger_entries
+       WHERE tenant_id=$1 AND local_date BETWEEN $2::date AND $3::date
+       GROUP BY employee_id
      ), leave_totals AS (
        SELECT lr.employee_id,
               COALESCE(sum(CASE WHEN lt.is_paid THEN lr.chargeable_amount ELSE 0 END),0)::numeric AS paid_leave_units,
@@ -64,14 +69,17 @@ const payroll = async (req, info, all) => {
        GROUP BY lr.employee_id
      )
      SELECT s.*,COALESCE(a.worked_mins,0)::integer AS worked_mins,COALESCE(a.overtime_mins,0)::integer AS overtime_mins,
+            COALESCE(o.approved_overtime_mins,0)::integer AS approved_overtime_mins,
             COALESCE(a.attendance_statuses,ARRAY[]::text[]) AS attendance_statuses,
             COALESCE(l.paid_leave_units,0)::numeric AS paid_leave_units,COALESCE(l.unpaid_leave_units,0)::numeric AS unpaid_leave_units,
             COALESCE(l.total_leave_units,0)::numeric AS total_leave_units,COALESCE(l.leave_units,'') AS leave_units
-     FROM employees_scope s LEFT JOIN attendance a ON a.employee_id=s.employee_id LEFT JOIN leave_totals l ON l.employee_id=s.employee_id
+     FROM employees_scope s LEFT JOIN attendance a ON a.employee_id=s.employee_id
+       LEFT JOIN approved_overtime o ON o.employee_id=s.employee_id
+       LEFT JOIN leave_totals l ON l.employee_id=s.employee_id
      ORDER BY s.name ASC,s.employee_id ASC`,
     params,
   );
-  return { rows: result.rows, basis: "Worked and overtime minutes come from attendance summaries; leave totals include approved requests only and preserve leave units.", title: "Payroll preparation timesheet" };
+  return { rows: result.rows, basis: "Worked and attendance-derived overtime come from attendance summaries. Approved overtime requests are shown separately so they are not double-counted; leave totals include approved requests only.", title: "Payroll preparation timesheet" };
 };
 
 const absenteeism = async (req, info) => {
@@ -93,17 +101,25 @@ const absenteeism = async (req, info) => {
 const overtime = async (req, info) => {
   const { params, where } = baseFilters(req, req.query.from || info.from, req.query.to || info.to);
   const result = await pool.query(
-    `SELECT e.department_id,d.name AS department_name,
+    `WITH approved_overtime AS (
+       SELECT employee_id,COALESCE(sum(minutes),0)::integer AS approved_overtime_mins
+       FROM overtime_ledger_entries
+       WHERE tenant_id=$1 AND local_date BETWEEN $2::date AND $3::date
+       GROUP BY employee_id
+     )
+     SELECT e.department_id,d.name AS department_name,
             COALESCE(sum(CASE WHEN j.is_ot_eligible THEN s.overtime_mins ELSE 0 END),0)::integer AS overtime_mins,
             COALESCE(sum(CASE WHEN NOT j.is_ot_eligible THEN GREATEST(s.worked_mins-j.standard_daily_mins,0) ELSE 0 END),0)::integer AS limit_exception_mins,
+            COALESCE(sum(o.approved_overtime_mins),0)::integer AS approved_overtime_mins,
             count(DISTINCT e.employee_id)::integer AS employee_count
        FROM employees e JOIN departments d ON d.tenant_id=e.tenant_id AND d.department_id=e.department_id
        JOIN job_profiles j ON j.tenant_id=e.tenant_id AND j.job_id=e.job_id
        LEFT JOIN attendance_summaries s ON s.tenant_id=e.tenant_id AND s.employee_id=e.employee_id AND s.local_date BETWEEN $2::date AND $3::date
+       LEFT JOIN approved_overtime o ON o.employee_id=e.employee_id
       WHERE ${where.join(" AND ")} GROUP BY e.department_id,d.name ORDER BY d.name`,
     params,
   );
-  return { rows: result.rows, basis: "Eligible overtime uses attendance overtime minutes; non-eligible work above the daily job standard is reported as a limit exception.", title: "Overtime by department" };
+  return { rows: result.rows, basis: "Attendance-derived overtime, approved overtime requests, and non-eligible work above the daily job standard are reported separately.", title: "Overtime by department" };
 };
 
 const liability = async (req, info) => {
