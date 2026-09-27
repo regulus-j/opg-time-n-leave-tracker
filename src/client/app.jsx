@@ -631,14 +631,44 @@ function Attendance({ data, employee, refresh, notify, canWrite, canRequestOvert
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [busy, setBusy] = useState(false);
+  const [formErrors, setFormErrors] = useState({});
+  const formRef = useRef(null);
   const [form, setForm] = useState({
     local_date: new Date().toISOString().slice(0, 10),
     start: "09:00",
     end: "17:00",
     reason: "",
   });
+  const updateForm = (patch) => {
+    setForm((current) => ({ ...current, ...patch }));
+    setFormErrors((current) => {
+      const next = { ...current };
+      Object.keys(patch).forEach((key) => delete next[key]);
+      delete next.form;
+      return next;
+    });
+  };
+  const validateForm = () => {
+    const next = {};
+    if (!form.local_date) next.local_date = "Choose the date to correct.";
+    if (!form.start) next.start = "Enter a clock-in time.";
+    if (!form.end) next.end = "Enter a clock-out time.";
+    if (form.start && form.end && form.end <= form.start) {
+      next.end = "Clock-out time must be later than clock-in time.";
+    }
+    if (!form.reason.trim()) next.reason = "Explain what needs correcting.";
+    return next;
+  };
   const submit = async (event) => {
     event.preventDefault();
+    const nextErrors = validateForm();
+    if (Object.keys(nextErrors).length) {
+      setFormErrors(nextErrors);
+      window.setTimeout(() => {
+        formRef.current?.querySelector("[aria-invalid=\"true\"]")?.focus();
+      }, 0);
+      return;
+    }
     setBusy(true);
     try {
       const row = await api.create("attendance-adjustments", {
@@ -665,6 +695,7 @@ function Attendance({ data, employee, refresh, notify, canWrite, canRequestOvert
       await refresh();
     } catch (e) {
       if (e.status === 409) await refresh();
+      setFormErrors({ form: e.message });
       notify(e.message, "error");
     } finally {
       setBusy(false);
@@ -795,34 +826,42 @@ function Attendance({ data, employee, refresh, notify, canWrite, canRequestOvert
           title="Request attendance correction"
           close={() => setModal(false)}
         >
-          <form onSubmit={submit} className="space-y-4" noValidate>
+          <form ref={formRef} onSubmit={submit} className="space-y-4" noValidate>
             <Field
               label="Date"
               type="date"
               value={form.local_date}
-              onChange={(v) => setForm({ ...form, local_date: v })}
+              required
+              error={formErrors.local_date}
+              onChange={(v) => updateForm({ local_date: v })}
             />
             <div className="grid grid-cols-2 gap-3">
               <Field
                 label="Clock in"
                 type="time"
                 value={form.start}
-                onChange={(v) => setForm({ ...form, start: v })}
+                required
+                error={formErrors.start}
+                onChange={(v) => updateForm({ start: v })}
               />
               <Field
                 label="Clock out"
                 type="time"
                 value={form.end}
-                onChange={(v) => setForm({ ...form, end: v })}
+                required
+                error={formErrors.end}
+                onChange={(v) => updateForm({ end: v })}
               />
             </div>
             <Field
               label="Reason"
               value={form.reason}
               required
+              error={formErrors.reason}
               helperText="Explain what needs correcting and, if relevant, what caused the mismatch."
-              onChange={(v) => setForm({ ...form, reason: v })}
+              onChange={(v) => updateForm({ reason: v })}
             />
+            {formErrors.form ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{formErrors.form}</p> : null}
             <Button disabled={busy} className="w-full">
               {busy ? "Submitting…" : "Submit for approval"}
             </Button>
@@ -1172,7 +1211,7 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
         <Modal title="Request leave" close={() => setModal(false)}>
           <form ref={formRef} onSubmit={submit} className="space-y-4" noValidate>
             <label className="block text-sm font-semibold">
-              Leave type
+              Leave type<span aria-hidden="true" className="ml-1 text-red-700">*</span>
               <select
                 id="leave-type"
                 aria-label="Leave type"
@@ -1470,6 +1509,13 @@ function Profile({ user, employee, tenant }) {
   );
 }
 function Approvals({ data, refresh, notify }) {
+  const [query, setQuery] = useState("");
+  const [kindFilter, setKindFilter] = useState("all");
+  const [selected, setSelected] = useState(null);
+  const [decision, setDecision] = useState(null);
+  const [busyId, setBusyId] = useState("");
+  const employees = new Map(data.employees.map((item) => [item.employee_id, item]));
+  const leaveTypes = new Map(data["leave-types"].map((item) => [item.leave_type_id, item]));
   const pending = [
     ...data["leave-requests"]
       .filter((i) => i.status === "pending")
@@ -1480,52 +1526,82 @@ function Approvals({ data, refresh, notify }) {
     ...data["overtime-requests"]
       .filter((i) => i.status === "pending")
       .map((i) => ({ ...i, kind: "overtime" })),
-  ];
+  ].map((item) => ({
+    ...item,
+    employee: employees.get(item.employee_id),
+    leaveType: leaveTypes.get(item.leave_type_id),
+  }));
+  const visiblePending = pending.filter((item) => {
+    const haystack = [
+      item.employee?.name,
+      item.employee?.employee_number,
+      item.reason,
+      item.leaveType?.name,
+      item.start_date,
+      item.end_date,
+      item.local_date,
+    ].filter(Boolean).join(" ").toLowerCase();
+    return (kindFilter === "all" || item.kind === kindFilter) && haystack.includes(query.toLowerCase());
+  });
+  const itemKey = (item) => item.request_id || item.adjustment_id || item.overtime_request_id;
   const decide = async (item, decision) => {
+    const key = itemKey(item);
+    setBusyId(`${key}:${decision}`);
     try {
       const resource = item.kind === "leave" ? "leave-requests" : item.kind === "adjustment" ? "attendance-adjustments" : "overtime-requests";
-      const id = item.request_id || item.adjustment_id || item.overtime_request_id;
+      const id = key;
       await api.transition(`/${resource}/${id}/${decision}`, {}, item.version);
       notify(
         `${human(item.kind)} ${decision === "approve" ? "approved" : "rejected"}.`,
       );
+      setSelected(null);
+      setDecision(null);
       await refresh();
     } catch (e) {
       if (e.status === 409) await refresh();
       notify(e.message, "error");
+    } finally {
+      setBusyId("");
     }
   };
+  const openDecision = (item, nextDecision) => {
+    setSelected(item);
+    setDecision(nextDecision);
+  };
+  const selectedKey = selected ? itemKey(selected) : "";
+  const selectedBusy = selected && decision ? busyId === `${selectedKey}:${decision}` : false;
   return (
     <div className="space-y-5">
       <Header
         title="Approvals"
         detail="Review pending requests in your authorized team scope."
       />
-      {pending.length ? (
+      {pending.length ? <Card><CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-end">
+        <Field label="Search approvals" value={query} onChange={setQuery} helperText="Search by employee, request reason, leave type, or date." />
+        <label className="text-sm font-semibold">Request type<select aria-label="Approval request type" value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} className="mt-2 h-11 w-full rounded-lg border bg-white px-3"><option value="all">All request types</option><option value="leave">Leave</option><option value="adjustment">Adjustment</option><option value="overtime">Overtime</option></select></label>
+        <Button variant="ghost" onClick={() => { setQuery(""); setKindFilter("all"); }}>Clear filters</Button>
+      </CardContent></Card> : null}
+      {visiblePending.length ? (
         <div className="space-y-3">
-          {pending.map((item) => (
-            <Card key={item.request_id || item.adjustment_id || item.overtime_request_id}>
+          {visiblePending.map((item) => (
+            <Card key={itemKey(item)}>
               <CardContent className="flex flex-col gap-4 pt-6 md:flex-row md:items-center">
                 <div className="flex-1">
-                  <p className="text-sm font-bold text-primary">
-                    {human(item.kind)}
-                  </p>
-                  <h2 className="mt-1">{item.reason}</h2>
+                  <p className="text-sm font-bold text-primary">{human(item.kind)}</p>
+                  <h2 className="mt-1">{item.employee?.name || "Unknown employee"}</h2>
+                  <p className="text-sm">{item.reason || "No reason provided"}</p>
+                  {item.kind === "leave" ? <p className="text-sm text-muted-foreground">{item.leaveType?.name || "Leave"} · {date(item.start_date)} – {date(item.end_date)} · {item.chargeable_amount ?? "—"} day(s)</p> : null}
+                  {item.kind === "adjustment" ? <p className="text-sm text-muted-foreground">{date(item.local_date)} · Attendance correction</p> : null}
                   {item.kind === "overtime" ? <p className="text-sm text-muted-foreground">{date(item.local_date)} · {item.start_time.slice(0, 5)}–{item.end_time.slice(0, 5)} · {item.requested_mins} minutes</p> : null}
-                  <p className="text-sm text-muted-foreground">
-                    {item.start_date
-                      ? `${date(item.start_date)} – ${date(item.end_date)}`
-                      : date(item.local_date)}
-                  </p>
                 </div>
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
-                    onClick={() => decide(item, "reject")}
+                    onClick={() => openDecision(item, "reject")}
                   >
                     Reject
                   </Button>
-                  <Button onClick={() => decide(item, "approve")}>
+                  <Button onClick={() => openDecision(item, "approve")}>
                     Approve
                   </Button>
                 </div>
@@ -1533,12 +1609,32 @@ function Approvals({ data, refresh, notify }) {
             </Card>
           ))}
         </div>
+      ) : pending.length ? (
+        <Empty title="No approvals match" detail="Clear the search or request type filter to see pending requests." />
       ) : (
         <Empty
           title="Inbox cleared"
           detail="There are no pending requests in your scope."
         />
       )}
+      {selected && decision ? <Modal title={`${decision === "approve" ? "Approve" : "Reject"} ${human(selected.kind).toLowerCase()}`} close={() => { if (!selectedBusy) { setSelected(null); setDecision(null); } }}>
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">Confirm this decision for the request below. This action changes the workflow status.</p>
+          <div className="rounded-lg border bg-muted/40 p-4 text-sm">
+            <p className="font-bold">{selected.employee?.name || "Unknown employee"}</p>
+            {selected.employee?.employee_number ? <p className="text-muted-foreground">{selected.employee.employee_number}</p> : null}
+            <p className="mt-3"><b>Request:</b> {human(selected.kind)}</p>
+            <p><b>Reason:</b> {selected.reason || "No reason provided"}</p>
+            {selected.kind === "leave" ? <p><b>Dates:</b> {date(selected.start_date)} – {date(selected.end_date)} · {selected.leaveType?.name || "Leave"} · {selected.chargeable_amount ?? "—"} day(s)</p> : null}
+            {selected.kind === "adjustment" ? <p><b>Date:</b> {date(selected.local_date)}</p> : null}
+            {selected.kind === "overtime" ? <p><b>Schedule:</b> {date(selected.local_date)} · {selected.start_time.slice(0, 5)}–{selected.end_time.slice(0, 5)} · {selected.requested_mins} minutes</p> : null}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" disabled={selectedBusy} onClick={() => { setSelected(null); setDecision(null); }}>Cancel</Button>
+            <Button aria-busy={selectedBusy} disabled={selectedBusy} onClick={() => decide(selected, decision)}>{selectedBusy ? "Saving…" : decision === "approve" ? "Confirm approval" : "Confirm rejection"}</Button>
+          </div>
+        </div>
+      </Modal> : null}
     </div>
   );
 }
@@ -1549,7 +1645,7 @@ function TeamDashboard({ data, user, onNavigate }) {
   useEffect(() => { load(); }, [load]);
   if (error) return <ErrorState message={error} retry={load} />;
   if (!dashboard) return <Loading />;
-  return <div className="space-y-5"><Header title="Team dashboard" detail="Live direct-report coverage, approvals, and workload signals." /><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Metric value={dashboard.direct_reports} label="Active direct reports" /><Metric value={dashboard.timesheets?.items?.length || 0} label="Recent timesheets" /><Metric value={dashboard.pending_approvals} label="Pending approvals" /><Metric value={dashboard.pending_overtime_approvals || 0} label="Overtime requests" /></div><div className="grid gap-3 sm:grid-cols-3"><Button variant="outline" onClick={() => onNavigate("whos-in")}>View presence</Button><Button variant="outline" onClick={() => onNavigate("team-calendar")}>Review coverage</Button><Button variant="outline" onClick={() => onNavigate("alerts")}>Open alerts ({dashboard.alerts?.length || 0})</Button></div></div>;
+  return <div className="space-y-5"><Header title="Team dashboard" detail="Live direct-report coverage, approvals, and workload signals." /><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Metric value={dashboard.direct_reports} label="Active direct reports" /><Metric value={dashboard.timesheets?.items?.length || 0} label="Recent timesheets" /><Metric value={dashboard.pending_approvals} label="Pending approvals" /><Metric value={dashboard.pending_overtime_approvals || 0} label="Overtime requests" /></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Button variant="outline" onClick={() => onNavigate("approvals")}>Review approvals ({dashboard.pending_approvals || 0})</Button><Button variant="outline" onClick={() => onNavigate("whos-in")}>View presence</Button><Button variant="outline" onClick={() => onNavigate("team-calendar")}>Review coverage</Button><Button variant="outline" onClick={() => onNavigate("alerts")}>Open alerts ({dashboard.alerts?.length || 0})</Button></div></div>;
 }
 
 function LegacyTeamDashboard({ data, user, onNavigate }) {
@@ -1753,30 +1849,7 @@ function TeamCalendarView({ rows, names }) {
           </label>
         }
       />
-      <Card><CardContent className="space-y-4 pt-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-end"><Field label="Search team leave" value={query} onChange={setQuery} /><div className="flex gap-2"><Button variant={view === "month" ? "secondary" : "outline"} onClick={() => setView("month")}>Month</Button><Button variant={view === "timeline" ? "secondary" : "outline"} onClick={() => setView("timeline")}>Timeline</Button><Button variant="ghost" onClick={() => setQuery("")}>Clear</Button></div></div>{view === "month" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{calendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Team leave calendar">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: daysInMonth }, (_, index) => { const localDate = `${calendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = visibleRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); const overlap = matches.length > 1; return <div key={localDate} className={`min-h-20 rounded-md border p-2 text-xs ${overlap ? "border-red-400 bg-red-50 text-red-900" : matches.length ? "bg-amber-50 text-amber-900" : "bg-white"}`}><b>{index + 1}</b>{matches.map((item) => <span className="mt-1 block truncate" title={names.get(item.employee_id)} key={item.request_id}>{names.get(item.employee_id)}{item.status === "pending" ? " · pending" : ""}</span>)}</div>; })}</div><p className="text-sm text-muted-foreground">Red days indicate overlapping leave; pending requests are shown only when enabled.</p></div> : visibleRows.length ? <div className="space-y-3">{visibleRows.map((item) => <Card key={item.request_id}><CardContent className="flex flex-col justify-between gap-3 pt-6 sm:flex-row sm:items-center"><div><h2>{names.get(item.employee_id)}</h2><p className="text-sm text-muted-foreground">{date(item.start_date)} – {date(item.end_date)} · {item.chargeable_amount} day(s)</p></div><Status value={item.status} /></CardContent></Card>)}</div> : <Empty title="No scheduled team leave" detail="Approved leave will appear here; include pending to preview requests." />}</CardContent></Card>
-      {false && rows.length ? (
-        <div className="space-y-3">
-          {rows.map((item) => (
-            <Card key={item.request_id}>
-              <CardContent className="flex flex-col justify-between gap-3 pt-6 sm:flex-row sm:items-center">
-                <div>
-                  <h2>{names.get(item.employee_id)}</h2>
-                  <p className="text-sm text-muted-foreground">
-                    {date(item.start_date)} – {date(item.end_date)} ·{" "}
-                    {item.chargeable_amount} day(s)
-                  </p>
-                </div>
-                <Status value={item.status} />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      ) : (
-        <Empty
-          title="No scheduled team leave"
-          detail="Approved leave will appear here; include pending to preview requests."
-        />
-      )}
+      <Card><CardContent className="space-y-4 pt-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-end"><Field label="Search team leave" value={query} onChange={setQuery} /><div className="flex gap-2"><Button variant={view === "month" ? "secondary" : "outline"} onClick={() => setView("month")}>Month</Button><Button variant={view === "timeline" ? "secondary" : "outline"} onClick={() => setView("timeline")}>Timeline</Button><Button variant="ghost" onClick={() => setQuery("")}>Clear</Button></div></div>{view === "month" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{calendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Team leave calendar">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: daysInMonth }, (_, index) => { const localDate = `${calendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = visibleRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); const overlap = matches.length > 1; const dayLabel = new Date(`${localDate}T12:00:00`).toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" }); const details = matches.length ? matches.map((item) => `${names.get(item.employee_id) || "Team member"}${item.status === "pending" ? " (pending)" : ""}`).join(", ") : "No leave"; return <div key={localDate} role="group" aria-label={`${dayLabel}: ${details}`} className={`min-h-20 rounded-md border p-2 text-xs ${overlap ? "border-red-400 bg-red-50 text-red-900" : matches.length ? "bg-amber-50 text-amber-900" : "bg-white"}`}><b>{index + 1}</b>{matches.map((item) => <span className="mt-1 block truncate" title={names.get(item.employee_id)} key={item.request_id}>{names.get(item.employee_id)}{item.status === "pending" ? " · pending" : ""}</span>)}</div>; })}</div><p className="text-sm text-muted-foreground">Red days indicate overlapping leave; pending requests are shown only when enabled.</p></div> : visibleRows.length ? <div className="space-y-3">{visibleRows.map((item) => <Card key={item.request_id}><CardContent className="flex flex-col justify-between gap-3 pt-6 sm:flex-row sm:items-center"><div><h2>{names.get(item.employee_id)}</h2><p className="text-sm text-muted-foreground">{date(item.start_date)} – {date(item.end_date)} · {item.chargeable_amount} day(s)</p></div><Status value={item.status} /></CardContent></Card>)}</div> : <Empty title="No scheduled team leave" detail="Approved leave will appear here; include pending to preview requests." />}</CardContent></Card>
     </div>
   );
 }
@@ -1791,6 +1864,8 @@ function TeamReports({ data, user, tenant }) {
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState("");
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -1809,6 +1884,8 @@ function TeamReports({ data, user, tenant }) {
   }, [page, pageSize, query, status]);
   useEffect(() => { load(); }, [load]);
   const exportCsv = async () => {
+    setExporting(true);
+    setExportMessage("");
     try {
       const params = new URLSearchParams({ q: query, ...(status === "all" ? {} : { status }) });
       const result = await api.downloadCsv(`/team/reports/timesheets.csv?${params}`);
@@ -1817,14 +1894,17 @@ function TeamReports({ data, user, tenant }) {
       link.download = result.filename;
       link.click();
       URL.revokeObjectURL(link.href);
+      setExportMessage("CSV exported successfully.");
     } catch (failure) {
       setError(failure.message);
+    } finally {
+      setExporting(false);
     }
   };
   if (error) return <ErrorState message={error} retry={load} />;
   if (loading) return <Loading />;
   return <div className="space-y-5">
-    <Header title="Reports & alerts" detail="Server-calculated timesheets and threshold-based workload signals for your reporting scope." action={tab === "timesheets" ? <Button onClick={exportCsv}>Export filtered CSV</Button> : null} />
+    <Header title="Reports & alerts" detail="Server-calculated timesheets and threshold-based workload signals for your reporting scope." action={tab === "timesheets" ? <div className="flex flex-wrap items-center justify-end gap-3"><Button aria-busy={exporting} disabled={exporting} onClick={exportCsv}>{exporting ? "Exporting…" : "Export filtered CSV"}</Button>{exportMessage ? <span role="status" className="text-sm font-semibold text-green-700">{exportMessage}</span> : null}</div> : null} />
     <div className="flex flex-wrap gap-2">
       <Button variant={tab === "timesheets" ? "secondary" : "outline"} onClick={() => setTab("timesheets")}>Timesheets ({timesheets.total})</Button>
       <Button variant={tab === "alerts" ? "secondary" : "outline"} onClick={() => setTab("alerts")}>Workload alerts ({alerts.length})</Button>
@@ -3422,7 +3502,7 @@ function LocalDateTime() {
   return <time dateTime={now.toISOString()}>{formatted}</time>;
 }
 
-function Field({ label, onChange, error, helperText, id, className, ...props }) {
+function Field({ label, onChange, error, helperText, id, className, required = false, ...props }) {
   const generatedId = useId();
   const inputId = id || `field-${generatedId.replace(/:/g, "")}`;
   const helperId = helperText ? `${inputId}-help` : "";
@@ -3431,12 +3511,13 @@ function Field({ label, onChange, error, helperText, id, className, ...props }) 
   const describedBy = [externalDescribedBy, helperId, errorId].filter(Boolean).join(" ") || undefined;
   return (
     <label className="block text-sm font-semibold" htmlFor={inputId}>
-      {label}
+      {label}{required ? <span aria-hidden="true" className="ml-1 text-red-700">*</span> : null}
       <input
         id={inputId}
         aria-label={label}
         aria-invalid={Boolean(error)}
         aria-describedby={describedBy}
+        required={required}
         onChange={(e) => onChange(e.target.value)}
         className={`mt-2 h-11 w-full rounded-lg border bg-white px-3 outline-none focus:ring-2 ${error ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"} ${className || ""}`}
         {...inputProps}
