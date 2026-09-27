@@ -93,6 +93,11 @@ export const api = {
       method: "POST",
       body: { email, password },
     }),
+  registerTenant: (body: Record<string, unknown>) =>
+    request<AuthContext>("/auth/register-tenant", {
+      method: "POST",
+      body,
+    }),
   me: () => request<AuthContext>("/auth/me"),
   context: (tenant_id: string | null) =>
     request<AuthContext>("/auth/context", {

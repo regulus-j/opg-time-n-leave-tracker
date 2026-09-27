@@ -261,6 +261,60 @@ test(
     assert.equal(existingLogin.status, 200);
     assert.ok(existingLogin.body.roles.includes("Reporting Manager"));
 
+    const registrationAgent = request.agent(app);
+    const registeredTenantId = `public-${Date.now()}`;
+    const registered = await registrationAgent
+      .post("/api/v1/auth/register-tenant")
+      .send({
+        tenant_id: registeredTenantId,
+        name: "Public Registration Organization",
+        timezone: "Asia/Manila",
+        locale: "en-PH",
+        currency: "PHP",
+        week_start: 1,
+        support_email: `support-${Date.now()}@dev.local`,
+        admin: {
+          display_name: "Public HR Administrator",
+          email: `public-admin-${Date.now()}@dev.local`,
+          password: "Public-Registration-2026!",
+        },
+      });
+    assert.equal(registered.status, 201);
+    assert.equal(registered.body.tenant_id, registeredTenantId);
+    assert.ok(registered.body.roles.includes("HR Manager"));
+    assert.equal(Object.prototype.hasOwnProperty.call(registered.body, "password"), false);
+    const registeredEmployees = await registrationAgent.get("/api/v1/employees");
+    assert.equal(registeredEmployees.status, 200);
+    assert.equal(registeredEmployees.body.length, 1);
+    assert.equal(registeredEmployees.body[0].status, "active");
+    const registeredDepartments = await registrationAgent.get("/api/v1/departments");
+    assert.equal(registeredDepartments.status, 200);
+    assert.equal(registeredDepartments.body[0].name, "General");
+    const duplicateRegistration = await request(app)
+      .post("/api/v1/auth/register-tenant")
+      .send({
+        tenant_id: registeredTenantId,
+        name: "Duplicate Registration Organization",
+        timezone: "Asia/Manila",
+        locale: "en-PH",
+        currency: "PHP",
+        week_start: 1,
+        admin: { display_name: "Another Admin", email: `duplicate-${Date.now()}@dev.local`, password: "Public-Registration-2026!" },
+      });
+    assert.equal(duplicateRegistration.status, 409);
+    const invalidRegistration = await request(app)
+      .post("/api/v1/auth/register-tenant")
+      .send({
+        tenant_id: "x",
+        name: "Invalid Registration Organization",
+        timezone: "Asia/Manila",
+        locale: "en-PH",
+        currency: "PHP",
+        week_start: 1,
+        admin: { display_name: "Invalid Admin", email: "invalid@example.com", password: "short" },
+      });
+    assert.equal(invalidRegistration.status, 422);
+
     process.env.NODE_ENV = "test";
     process.env.INVITATION_TEST_TOKEN = "test-invitation-token-12345678901234567890";
     const tenantId = `browser-${Date.now()}`;

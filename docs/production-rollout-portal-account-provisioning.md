@@ -12,6 +12,8 @@ The fix makes the Edit flow provision an account when the employee is marked **N
 - Supabase provides PostgreSQL only. The browser does not connect directly to Supabase Data API, Auth, or Storage.
 - Keep separate Supabase projects for staging and production. Never point a preview deployment at the production database.
 
+Public tenant registration is available at `/#/register` and `POST /api/v1/auth/register-tenant`. It activates the registering HR administrator immediately, uses the same tenant defaults as Platform Administrator provisioning, and is protected by the registration rate limit. Platform Administrator provisioning and invitation acceptance remain available for managed onboarding.
+
 ## Required Vercel configuration
 
 Configure the following for the appropriate Vercel environment (Preview/Staging and Production separately):

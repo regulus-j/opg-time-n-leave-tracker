@@ -210,7 +210,7 @@ Recommended next steps:
 
 ### Who creates a new organization?
 
-The platform administrator provisions the organization, sets its basic defaults, and invites the first HR administrator. Companies do not self-register in the current operating model. Suspension is reversible so historical attendance, leave, and audit records remain available.
+Companies can register through the public onboarding form, which creates the organization defaults and activates the registering person as its first HR administrator. Platform administrators can also provision organizations manually and resend invitations. Suspension is reversible so historical attendance, leave, and audit records remain available.
 
 ### Who can see employee attendance and leave?
 

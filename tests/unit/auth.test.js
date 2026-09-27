@@ -14,6 +14,7 @@ import {
   clearLoginRateLimit,
   loginRateLimit,
 } from "../../src/server/middleware/login-rate-limit.js";
+import { registrationRateLimit } from "../../src/server/middleware/registration-rate-limit.js";
 
 test("password hashing, JWT sessions, and CSRF signatures reject invalid values", async () => {
   process.env.BCRYPT_ROUNDS = "4";
@@ -66,4 +67,18 @@ test("login rate limiter returns 429 after the configured threshold", () => {
   assert.equal(errors[2].status, 429);
   clearLoginRateLimit(req);
   delete process.env.LOGIN_RATE_MAX;
+});
+
+test("tenant registration rate limiter keys attempts by IP and email", () => {
+  process.env.REGISTRATION_RATE_MAX = "2";
+  const req = { ip: "unit-registration-rate-limit", body: { admin: { email: "register@example.com" } } };
+  const res = { set() {} };
+  const errors = [];
+  registrationRateLimit(req, res, (error) => errors.push(error));
+  registrationRateLimit(req, res, (error) => errors.push(error));
+  registrationRateLimit(req, res, (error) => errors.push(error));
+  assert.equal(errors[0], undefined);
+  assert.equal(errors[1], undefined);
+  assert.equal(errors[2].status, 429);
+  delete process.env.REGISTRATION_RATE_MAX;
 });

@@ -310,10 +310,43 @@ function Login({ onLogin }) {
           <p className="mt-5 text-center text-xs text-muted-foreground">
             Use your organization account credentials.
           </p>
+          <p className="mt-2 text-center text-sm">
+            <a className="font-semibold text-primary underline" href="#/register">
+              Register your organization
+            </a>
+          </p>
         </CardContent>
       </Card>
     </main>
   );
+}
+
+function TenantRegistration({ onLogin }) {
+  const [form, setForm] = useState({ tenant_id: "", name: "", timezone: "Asia/Manila", locale: "en-PH", currency: "PHP", week_start: "1", support_email: "", adminName: "", adminEmail: "", password: "", confirmPassword: "" });
+  const [errors, setErrors] = useState({});
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const submit = async (event) => {
+    event.preventDefault();
+    const next = {};
+    if (!/^[a-z0-9][a-z0-9-]{1,47}$/.test(form.tenant_id)) next.tenant_id = "Use 2–48 lowercase letters, numbers, or hyphens.";
+    if (!form.name.trim()) next.name = "Enter your organization name.";
+    if (!form.adminName.trim()) next.adminName = "Enter the initial HR administrator’s name.";
+    if (!/^\S+@\S+\.\S+$/.test(form.adminEmail.trim())) next.adminEmail = "Enter a valid administrator email address.";
+    if (form.password.length < 12) next.password = "Use at least 12 characters.";
+    if (form.password !== form.confirmPassword) next.confirmPassword = "Passwords do not match.";
+    if (Object.keys(next).length) { setErrors(next); setError(""); return; }
+    setBusy(true); setErrors({}); setError("");
+    try {
+      const account = await api.registerTenant({ tenant_id: form.tenant_id, name: form.name.trim(), timezone: form.timezone, locale: form.locale, currency: form.currency, week_start: Number(form.week_start), support_email: form.support_email.trim() || undefined, admin: { display_name: form.adminName.trim(), email: form.adminEmail.trim(), password: form.password } });
+      localStorage.setItem("tlt_has_session", "1");
+      onLogin(account);
+      window.location.hash = "/app/dashboard";
+    } catch (failure) { setError(failure.message); }
+    finally { setBusy(false); }
+  };
+  return <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#fff8ed] p-5"><Card className="relative w-full max-w-2xl border-orange-200/70 shadow-2xl shadow-orange-950/10"><CardHeader><div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl bg-primary font-bold text-white">TL</div><div><p className="text-sm font-semibold text-primary">OPG Workforce</p><p className="text-xs text-muted-foreground">Create your organization</p></div></div><div><h1 className="text-3xl">Register your organization</h1><CardDescription className="mt-2">Set up your organization and become its initial HR administrator.</CardDescription></div></CardHeader><CardContent><form className="space-y-4" onSubmit={submit} noValidate><div className="grid gap-3 sm:grid-cols-2"><Field label="Organization name" required value={form.name} error={errors.name} onChange={(value) => update("name", value)} /><Field label="Organization ID" required value={form.tenant_id} error={errors.tenant_id} helperText="Use 2–48 lowercase letters, numbers, or hyphens." onChange={(value) => update("tenant_id", value.toLowerCase())} /></div><div className="grid gap-3 sm:grid-cols-2"><Field label="Timezone" required value={form.timezone} onChange={(value) => update("timezone", value)} /><Field label="Locale" required value={form.locale} onChange={(value) => update("locale", value)} /></div><div className="grid gap-3 sm:grid-cols-2"><Field label="Currency" required value={form.currency} onChange={(value) => update("currency", value.toUpperCase())} /><label className="text-sm font-semibold">Week starts<select aria-label="Week starts" value={form.week_start} onChange={(event) => update("week_start", event.target.value)} className="mt-2 h-11 w-full rounded-lg border bg-white px-3"><option value="0">Sunday</option><option value="1">Monday</option><option value="6">Saturday</option></select></label></div><Field label="Support email (optional)" type="email" value={form.support_email} onChange={(value) => update("support_email", value)} /><div className="space-y-3 rounded-xl border bg-muted/30 p-4"><p className="font-semibold">Initial HR administrator</p><div className="grid gap-3 sm:grid-cols-2"><Field label="Full name" required value={form.adminName} error={errors.adminName} onChange={(value) => update("adminName", value)} /><Field label="Email" type="email" required value={form.adminEmail} error={errors.adminEmail} onChange={(value) => update("adminEmail", value)} /></div><div className="grid gap-3 sm:grid-cols-2"><Field label="Password" type="password" required minLength="12" autoComplete="new-password" value={form.password} error={errors.password} helperText="Use at least 12 characters." onChange={(value) => update("password", value)} /><Field label="Confirm password" type="password" required minLength="12" autoComplete="new-password" value={form.confirmPassword} error={errors.confirmPassword} onChange={(value) => update("confirmPassword", value)} /></div><p className="text-xs text-muted-foreground">Your account is activated immediately with HR Manager access.</p></div>{error ? <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}<Button className="w-full" disabled={busy}>{busy ? "Creating organization…" : "Create organization"}</Button></form><p className="mt-5 text-center text-sm text-muted-foreground">Already have an account? <a className="font-semibold text-primary underline" href="#/login">Sign in</a></p></CardContent></Card></main>;
 }
 
 function Loading() {
@@ -3669,7 +3702,7 @@ function PlatformOverview({ onEnter, notify }) {
   return <div className="space-y-5">
     <Header title="Platform overview" detail="Global organization and access control plane." action={<Button onClick={openCreate}>Create organization</Button>} />
     <div className="grid gap-4 sm:grid-cols-3"><Metric value={tenants.length} label="Organizations" /><Metric value={tenants.filter((item) => item.status === "active").length} label="Active organizations" /><Metric value={access.length} label="Tenant access assignments" /></div>
-    <Card><CardHeader><CardTitle>Organizations</CardTitle><CardDescription>Create and maintain organizations here. Companies do not self-register.</CardDescription></CardHeader><CardContent className="space-y-4">
+    <Card><CardHeader><CardTitle>Organizations</CardTitle><CardDescription>Create and maintain organizations here. Public registration is also available from the sign-in page.</CardDescription></CardHeader><CardContent className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row"><Field label="Search organizations" value={query} onChange={setQuery} /><label className="text-sm font-semibold">Status<select aria-label="Organization status" value={status} onChange={(event) => setStatus(event.target.value)} className="mt-2 h-11 rounded-lg border bg-white px-3"><option value="all">All statuses</option><option value="active">Active</option><option value="suspended">Suspended</option></select></label></div>
       {rows.length ? rows.map((tenant) => <div key={tenant.tenant_id} className="flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><h2>{tenant.name}</h2><p className="text-sm text-muted-foreground">{tenant.tenant_id} · {tenant.active_employees} active employees · {tenant.pending_requests} pending requests</p><p className="mt-1 text-xs text-muted-foreground">HR invitation: {tenant.invitation?.status ? `${human(tenant.invitation.status)}${tenant.invitation.email ? ` · ${tenant.invitation.email}` : ""}` : "Not created"}</p></div><div className="flex flex-wrap gap-2"><Status value={tenant.status} /><Button size="sm" onClick={() => onEnter(tenant.tenant_id)}>Enter organization</Button><Button size="sm" variant="outline" onClick={() => openEdit(tenant)}>Edit</Button><Button size="sm" variant="outline" onClick={() => changeStatus(tenant)}>{tenant.status === "active" ? "Suspend" : "Reactivate"}</Button>{tenant.invitation?.status !== "accepted" ? <Button size="sm" variant="outline" onClick={() => resend(tenant)}>Resend invite</Button> : null}</div></div>) : <Empty title="No organizations match" detail="Clear the search or status filter." />}
     </CardContent></Card><p className="text-sm text-muted-foreground">Platform actions are audited separately from tenant HR activity.</p>
@@ -4106,6 +4139,7 @@ function InvitationAccept({ onLogin }) {
 
 function App() {
   const [user, setUser] = useState(null);
+  const [hash, setHash] = useState(() => window.location.hash);
   const [checking, setChecking] = useState(true);
   const [data, setData] = useState(emptyData);
   const [loading, setLoading] = useState(false);
@@ -4143,6 +4177,11 @@ function App() {
       setLoading(false);
     }
   }, [user]);
+  useEffect(() => {
+    const onHashChange = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
   useEffect(() => {
     if (!localStorage.getItem("tlt_has_session")) {
       setChecking(false);
@@ -4191,7 +4230,8 @@ function App() {
         </div>
       </main>
     );
-  const isInvitationRoute = window.location.hash.startsWith("#/accept-invitation");
+  const isInvitationRoute = hash.startsWith("#/accept-invitation");
+  const isRegistrationRoute = hash.startsWith("#/register");
   return user ? (
     <Shell
       user={user}
@@ -4202,6 +4242,8 @@ function App() {
       logout={logout}
       onContextChange={setUser}
     />
+  ) : isRegistrationRoute ? (
+    <TenantRegistration onLogin={setUser} />
   ) : isInvitationRoute ? (
     <InvitationAccept onLogin={setUser} />
   ) : (

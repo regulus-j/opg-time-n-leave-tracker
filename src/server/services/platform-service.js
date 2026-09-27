@@ -26,21 +26,21 @@ const requiredString = (value, field) => {
   return value.trim();
 };
 
-const normalizeEmail = (value, field = "email") => {
+export const normalizeEmail = (value, field = "email") => {
   const email = requiredString(value, field).toLowerCase();
   if (!/^\S+@\S+\.\S+$/.test(email))
     throw new HttpError(422, "Invalid Request", `${field} must be a valid email address.`);
   return email;
 };
 
-const normalizeTenantId = (value) => {
+export const normalizeTenantId = (value) => {
   const tenantId = requiredString(value, "tenant_id").toLowerCase();
   if (!/^[a-z0-9][a-z0-9-]{1,47}$/.test(tenantId))
     throw new HttpError(422, "Invalid Request", "tenant_id must be a lowercase slug between 2 and 48 characters.");
   return tenantId;
 };
 
-const normalizeTimezone = (value) => {
+export const normalizeTimezone = (value) => {
   const timezone = requiredString(value, "timezone");
   try {
     new Intl.DateTimeFormat("en", { timeZone: timezone }).format();
@@ -50,7 +50,7 @@ const normalizeTimezone = (value) => {
   return timezone;
 };
 
-const normalizeOrganization = (body, { partial = false } = {}) => {
+export const normalizeOrganization = (body, { partial = false } = {}) => {
   const source = body || {};
   const result = {};
   if (!partial || source.name !== undefined) result.name = requiredString(source.name, "name");
@@ -68,7 +68,7 @@ const normalizeOrganization = (body, { partial = false } = {}) => {
   return result;
 };
 
-const hrCapabilities = [
+export const hrCapabilities = [
   "attendance-sessions:write", "attendance-adjustments:write", "attendance:write", "attendance:override",
   "attendance:approve", "leave-requests:write", "leave:write", "leave:approve",
   "leave:override", "overtime-requests:write", "overtime:approve", "job-profiles:write", "job-leave-policies:write",
@@ -125,6 +125,80 @@ const auditPlatform = async (client, req, action, targetId, reason = null, metad
      VALUES ($1,$2,$3,'Tenant',$4,$5,$6,$7::jsonb)`,
     [id(), req.actor.platform_user_id || req.actor.user_id, action, targetId, now(), reason, JSON.stringify(metadata)],
   );
+};
+
+export const provisionTenantDefaults = async (client, { tenantId, organization, adminName, adminEmail, active = true }) => {
+  const duplicate = await client.query("SELECT 1 FROM tenants WHERE tenant_id=$1", [tenantId]);
+  if (duplicate.rowCount)
+    throw new HttpError(409, "Duplicate Organization", "An organization with this ID already exists.");
+  const usedEmail = await client.query(
+    `SELECT 1 FROM users WHERE lower(email)=lower($1)
+     UNION ALL SELECT 1 FROM auth_credentials WHERE lower(email)=lower($1)
+     UNION ALL SELECT 1 FROM platform_users WHERE lower(email)=lower($1)
+     UNION ALL SELECT 1 FROM platform_credentials WHERE lower(email)=lower($1)
+     LIMIT 1`,
+    [adminEmail],
+  );
+  if (usedEmail.rowCount)
+    throw new HttpError(409, "Duplicate Email", "This email is already assigned to a tenant account.");
+  const ids = { department: id(), calendar: id(), location: id(), schedule: id(), job: id(), employee: id(), user: id() };
+  const status = active ? "active" : "inactive";
+  const settings = { support_email: organization.support_email || adminEmail, minimum_coverage: 1, overtime_warning_percent: 80 };
+  await client.query(
+    `INSERT INTO tenants (tenant_id,name,timezone,locale,week_start,currency,settings)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
+    [tenantId, organization.name, organization.timezone, organization.locale, organization.week_start, organization.currency, JSON.stringify(settings)],
+  );
+  await client.query(
+    `INSERT INTO tenant_platform_state (tenant_id,status,settings)
+     VALUES ($1,'active',$2::jsonb)`,
+    [tenantId, JSON.stringify({ minimum_coverage: 1, overtime_warning_percent: 80 })],
+  );
+  await client.query(
+    `INSERT INTO departments (department_id,tenant_id,name,code,status)
+     VALUES ($1,$2,'General','GENERAL','active')`,
+    [ids.department, tenantId],
+  );
+  await client.query(
+    `INSERT INTO holiday_calendars (holiday_calendar_id,tenant_id,name,location_ids,status)
+     VALUES ($1,$2,'Default calendar',ARRAY[]::text[],'active')`,
+    [ids.calendar, tenantId],
+  );
+  await client.query(
+    `INSERT INTO locations (location_id,tenant_id,name,timezone,holiday_calendar_id,status)
+     VALUES ($1,$2,'Default location',$3,$4,'active')`,
+    [ids.location, tenantId, organization.timezone, ids.calendar],
+  );
+  await client.query(
+    `UPDATE holiday_calendars SET location_ids=ARRAY[$1]::text[]
+     WHERE tenant_id=$2 AND holiday_calendar_id=$3`,
+    [ids.location, tenantId, ids.calendar],
+  );
+  await client.query(
+    `INSERT INTO work_schedules (schedule_id,tenant_id,name,weekday_rules,effective_from,effective_to,status)
+     VALUES ($1,$2,'Standard Monday-Friday',$3::jsonb,CURRENT_DATE,NULL,'active')`,
+    [ids.schedule, tenantId, JSON.stringify({
+      monday: { start: "09:00", end: "17:00" }, tuesday: { start: "09:00", end: "17:00" },
+      wednesday: { start: "09:00", end: "17:00" }, thursday: { start: "09:00", end: "17:00" },
+      friday: { start: "09:00", end: "17:00" },
+    })],
+  );
+  await client.query(
+    `INSERT INTO job_profiles (job_id,tenant_id,title,department_id,standard_daily_mins,standard_weekly_mins,is_ot_eligible,max_daily_mins,effective_from,effective_to,status)
+     VALUES ($1,$2,'Organization Administrator',$3,480,2400,true,720,CURRENT_DATE,NULL,'active')`,
+    [ids.job, tenantId, ids.department],
+  );
+  await client.query(
+    `INSERT INTO employees (employee_id,tenant_id,employee_number,name,job_id,manager_id,department_id,location_id,holiday_calendar_id,work_schedule,start_date,status)
+     VALUES ($1,$2,$3,$4,$5,NULL,$6,$7,$8,$9::jsonb,CURRENT_DATE,$10)`,
+    [ids.employee, tenantId, `${tenantId.toUpperCase()}-ADMIN`, adminName, ids.job, ids.department, ids.location, ids.calendar, JSON.stringify({ schedule_id: ids.schedule }), status],
+  );
+  await client.query(
+    `INSERT INTO users (user_id,tenant_id,employee_id,display_name,email,capabilities,status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [ids.user, tenantId, ids.employee, adminName, adminEmail, hrCapabilities, status],
+  );
+  return { ...ids, settings };
 };
 
 const mapTenant = (row) => ({
@@ -201,91 +275,15 @@ export const createTenant = async (req) => {
   const inviteId = id();
   const expiresAt = new Date(Date.now() + invitationLifetimeHours() * 60 * 60 * 1000).toISOString();
   const platformUserId = req.actor.platform_user_id || req.actor.user_id;
-  const ids = {
-    department: id(),
-    calendar: id(),
-    location: id(),
-    schedule: id(),
-    job: id(),
-    employee: id(),
-    user: id(),
-  };
 
   const created = await withTransaction(async (client) => {
-    const duplicate = await client.query("SELECT 1 FROM tenants WHERE tenant_id=$1", [tenantId]);
-    if (duplicate.rowCount)
-      throw new HttpError(409, "Duplicate Organization", "An organization with this ID already exists.");
-    const usedEmail = await client.query(
-      `SELECT 1 FROM users WHERE lower(email)=lower($1)
-       UNION ALL SELECT 1 FROM auth_credentials WHERE lower(email)=lower($1)
-       UNION ALL SELECT 1 FROM platform_users WHERE lower(email)=lower($1)
-       UNION ALL SELECT 1 FROM platform_credentials WHERE lower(email)=lower($1)
-       LIMIT 1`,
-      [adminEmail],
-    );
-    if (usedEmail.rowCount)
-      throw new HttpError(409, "Duplicate Email", "This email is already assigned to a tenant account.");
-    const settings = {
-      support_email: organization.support_email || adminEmail,
-      minimum_coverage: 1,
-      overtime_warning_percent: 80,
-    };
-    await client.query(
-      `INSERT INTO tenants (tenant_id,name,timezone,locale,week_start,currency,settings)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
-      [tenantId, organization.name, organization.timezone, organization.locale, organization.week_start, organization.currency, JSON.stringify(settings)],
-    );
-    await client.query(
-      `INSERT INTO tenant_platform_state (tenant_id,status,settings)
-       VALUES ($1,'active',$2::jsonb)`,
-      [tenantId, JSON.stringify({ minimum_coverage: 1, overtime_warning_percent: 80 })],
-    );
-    await client.query(
-      `INSERT INTO departments (department_id,tenant_id,name,code,status)
-       VALUES ($1,$2,'General','GENERAL','active')`,
-      [ids.department, tenantId],
-    );
-    await client.query(
-      `INSERT INTO holiday_calendars (holiday_calendar_id,tenant_id,name,location_ids,status)
-       VALUES ($1,$2,'Default calendar',ARRAY[]::text[],'active')`,
-      [ids.calendar, tenantId],
-    );
-    await client.query(
-      `INSERT INTO locations (location_id,tenant_id,name,timezone,holiday_calendar_id,status)
-       VALUES ($1,$2,'Default location',$3,$4,'active')`,
-      [ids.location, tenantId, organization.timezone, ids.calendar],
-    );
-    await client.query(
-      `UPDATE holiday_calendars SET location_ids=ARRAY[$1]::text[]
-       WHERE tenant_id=$2 AND holiday_calendar_id=$3`,
-      [ids.location, tenantId, ids.calendar],
-    );
-    await client.query(
-      `INSERT INTO work_schedules (schedule_id,tenant_id,name,weekday_rules,effective_from,effective_to,status)
-       VALUES ($1,$2,'Standard Monday-Friday',$3::jsonb,CURRENT_DATE,NULL,'active')`,
-      [ids.schedule, tenantId, JSON.stringify({
-        monday: { start: "09:00", end: "17:00" },
-        tuesday: { start: "09:00", end: "17:00" },
-        wednesday: { start: "09:00", end: "17:00" },
-        thursday: { start: "09:00", end: "17:00" },
-        friday: { start: "09:00", end: "17:00" },
-      })],
-    );
-    await client.query(
-      `INSERT INTO job_profiles (job_id,tenant_id,title,department_id,standard_daily_mins,standard_weekly_mins,is_ot_eligible,max_daily_mins,effective_from,effective_to,status)
-       VALUES ($1,$2,'Organization Administrator',$3,480,2400,true,720,CURRENT_DATE,NULL,'active')`,
-      [ids.job, tenantId, ids.department],
-    );
-    await client.query(
-      `INSERT INTO employees (employee_id,tenant_id,employee_number,name,job_id,manager_id,department_id,location_id,holiday_calendar_id,work_schedule,start_date,status)
-       VALUES ($1,$2,$3,$4,$5,NULL,$6,$7,$8,$9::jsonb,CURRENT_DATE,'inactive')`,
-      [ids.employee, tenantId, `${tenantId.toUpperCase()}-ADMIN`, adminName, ids.job, ids.department, ids.location, ids.calendar, JSON.stringify({ schedule_id: ids.schedule })],
-    );
-    await client.query(
-      `INSERT INTO users (user_id,tenant_id,employee_id,display_name,email,capabilities,status)
-       VALUES ($1,$2,$3,$4,$5,$6,'inactive')`,
-      [ids.user, tenantId, ids.employee, adminName, adminEmail, hrCapabilities],
-    );
+    const ids = await provisionTenantDefaults(client, {
+      tenantId,
+      organization,
+      adminName,
+      adminEmail,
+      active: false,
+    });
     await client.query(
       `INSERT INTO platform_memberships (platform_user_id,tenant_id,tenant_user_id,roles,status)
        VALUES ($1,$2,$3,ARRAY['Platform Administrator','HR Manager'],'active')`,

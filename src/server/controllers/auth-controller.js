@@ -8,6 +8,7 @@ import {
 } from "../services/auth-service.js";
 import { HttpError } from "../views/problem-view.js";
 import { clearLoginRateLimit } from "../middleware/login-rate-limit.js";
+import { registerTenant } from "../services/registration-service.js";
 
 const maxAge = () =>
   Number(process.env.COOKIE_MAX_AGE_MS || 8 * 60 * 60 * 1000);
@@ -69,6 +70,12 @@ export const login = async (req, res) => {
     req.body.password,
   );
   clearLoginRateLimit(req);
+  return authPayload(actor, setAuthCookies(res, actor));
+};
+
+export const register = async (req, res) => {
+  const created = await registerTenant(req.body || {});
+  const actor = await authenticate(pool, created.email, req.body.admin.password);
   return authPayload(actor, setAuthCookies(res, actor));
 };
 
