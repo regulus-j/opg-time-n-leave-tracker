@@ -89,6 +89,40 @@ const accountCapabilities = (roles = [], requested = []) => {
   return [...allowed];
 };
 
+const createPortalAccount = async (client, tenantId, employee, account) => {
+  assertString(account?.email, "account.email");
+  assertString(account?.password, "account.password");
+  if (account.password.length < 12)
+    throw new HttpError(422, "Invalid Request", "Account password must be at least 12 characters.");
+  const email = account.email.trim();
+  const duplicate = await client.query(
+    `SELECT 1 FROM auth_credentials WHERE lower(email)=lower($1)
+     UNION ALL SELECT 1 FROM platform_credentials WHERE lower(email)=lower($1)
+     LIMIT 1`,
+    [email],
+  );
+  if (duplicate.rowCount)
+    throw new HttpError(409, "Duplicate Email", "This email is already assigned to an account.");
+  const existing = await client.query(
+    "SELECT 1 FROM users WHERE tenant_id=$1 AND employee_id=$2 AND status='active' LIMIT 1",
+    [tenantId, employee.employee_id],
+  );
+  if (existing.rowCount)
+    throw new HttpError(409, "Account Already Active", "This employee already has an active portal account.");
+  const userId = account.user_id || id("user");
+  const capabilities = accountCapabilities(account.roles, account.capabilities);
+  const displayName = account.display_name || employee.name;
+  await client.query(
+    "INSERT INTO users (user_id,tenant_id,employee_id,display_name,email,capabilities,status) VALUES ($1,$2,$3,$4,$5,$6,'active')",
+    [userId, tenantId, employee.employee_id, displayName, email, capabilities],
+  );
+  await client.query(
+    "INSERT INTO auth_credentials (user_id,tenant_id,email,password_hash) VALUES ($1,$2,$3,$4)",
+    [userId, tenantId, email, await hashPassword(account.password)],
+  );
+  return { user_id: userId, display_name: displayName, email, roles: account.roles || ["Employee"], status: "active" };
+};
+
 export const createDirectoryEntry = async (req) => withTransaction(async (client) => {
   const body = req.body || {};
   const employeeId = body.employee_id || id("employee");
@@ -102,18 +136,7 @@ export const createDirectoryEntry = async (req) => withTransaction(async (client
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     [employee.employee_id, req.tenantId, employee.employee_number, employee.name, employee.job_id, employee.manager_id, employee.department_id, employee.location_id, employee.holiday_calendar_id, employee.work_schedule, employee.start_date, employee.status],
   );
-  let account = null;
-  if (body.account?.enabled) {
-    assertString(body.account.email, "account.email");
-    assertString(body.account.password, "account.password");
-    if (body.account.password.length < 12) throw new HttpError(422, "Invalid Request", "Account password must be at least 12 characters.");
-    const userId = body.account.user_id || id("user");
-    const capabilities = accountCapabilities(body.account.roles, body.account.capabilities);
-    const displayName = body.account.display_name || employee.name;
-    await client.query("INSERT INTO users (user_id,tenant_id,employee_id,display_name,email,capabilities,status) VALUES ($1,$2,$3,$4,$5,$6,'active')", [userId, req.tenantId, employee.employee_id, displayName, body.account.email.trim(), capabilities]);
-    await client.query("INSERT INTO auth_credentials (user_id,tenant_id,email,password_hash) VALUES ($1,$2,$3,$4)", [userId, req.tenantId, body.account.email.trim(), await hashPassword(body.account.password)]);
-    account = { user_id: userId, display_name: displayName, email: body.account.email.trim(), roles: body.account.roles || ["Employee"], status: "active" };
-  }
+  const account = body.account?.enabled ? await createPortalAccount(client, req.tenantId, employee, body.account) : null;
   await audit(client, req, "directory_create", "Employee", employee.employee_id, "HR directory entry created", { account_created: Boolean(account) });
   return { employee, account };
 });
@@ -130,9 +153,12 @@ export const updateDirectoryEntry = async (req) => withTransaction(async (client
     `UPDATE employees SET employee_number=$1,name=$2,job_id=$3,manager_id=$4,department_id=$5,location_id=$6,holiday_calendar_id=$7,work_schedule=$8,start_date=$9,status=$10 WHERE tenant_id=$11 AND employee_id=$12 RETURNING *`,
     [employee.employee_number, employee.name, employee.job_id, employee.manager_id, employee.department_id, employee.location_id, employee.holiday_calendar_id, employee.work_schedule, employee.start_date, employee.status, req.tenantId, employee.employee_id],
   );
+  const account = req.body?.account?.enabled
+    ? await createPortalAccount(client, req.tenantId, employee, req.body.account)
+    : null;
   const directReports = await client.query("SELECT employee_id FROM employees WHERE tenant_id=$1 AND manager_id=$2 AND status='active' ORDER BY employee_id", [req.tenantId, employee.employee_id]);
-  await audit(client, req, "directory_update", "Employee", employee.employee_id, "HR directory assignment updated", { manager_id: employee.manager_id });
-  return { employee: result.rows[0], reporting_scope: { direct_report_ids: directReports.rows.map((row) => row.employee_id), direct_report_count: directReports.rowCount } };
+  await audit(client, req, "directory_update", "Employee", employee.employee_id, "HR directory assignment updated", { manager_id: employee.manager_id, account_created: Boolean(account) });
+  return { employee: result.rows[0], account, reporting_scope: { direct_report_ids: directReports.rows.map((row) => row.employee_id), direct_report_count: directReports.rowCount } };
 });
 
 export const resetPassword = async (req) => withTransaction(async (client) => {

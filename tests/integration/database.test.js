@@ -227,6 +227,40 @@ test(
     assert.equal(directory.status, 201);
     assert.equal(Object.prototype.hasOwnProperty.call(directory.body, "password"), false);
 
+    const unprovisionedEmail = `existing-directory-${Date.now()}@dev.local`;
+    const unprovisioned = await admin
+      .post("/api/v1/hr/directory")
+      .set("x-csrf-token", context.body.csrf_token)
+      .send({
+        employee_number: `NS-UNPROVISIONED-${Date.now()}`,
+        name: "Existing Directory User",
+        job_id: "ns-coordinator",
+        manager_id: "ns-alex",
+        department_id: "ns-ops",
+        location_id: "ns-manila",
+        holiday_calendar_id: "ns-ph",
+        work_schedule: { schedule_id: "ns-standard" },
+        start_date: "2026-09-18",
+        status: "active",
+      });
+    assert.equal(unprovisioned.status, 201);
+    assert.equal(unprovisioned.body.account, null);
+    const provisionedExisting = await admin
+      .put(`/api/v1/hr/directory/${unprovisioned.body.employee.employee_id}`)
+      .set("x-csrf-token", context.body.csrf_token)
+      .send({
+        ...unprovisioned.body.employee,
+        account: { enabled: true, email: unprovisionedEmail, password: "Existing-Password-2026!", roles: ["Reporting Manager"] },
+      });
+    assert.equal(provisionedExisting.status, 200);
+    assert.equal(provisionedExisting.body.account.email, unprovisionedEmail);
+    assert.deepEqual(provisionedExisting.body.account.roles, ["Reporting Manager"]);
+    assert.equal(Object.prototype.hasOwnProperty.call(provisionedExisting.body.account, "password"), false);
+    const provisionedLogin = request.agent(app);
+    const existingLogin = await provisionedLogin.post("/api/v1/auth/login").send({ email: unprovisionedEmail, password: "Existing-Password-2026!" });
+    assert.equal(existingLogin.status, 200);
+    assert.ok(existingLogin.body.roles.includes("Reporting Manager"));
+
     process.env.NODE_ENV = "test";
     process.env.INVITATION_TEST_TOKEN = "test-invitation-token-12345678901234567890";
     const tenantId = `browser-${Date.now()}`;
