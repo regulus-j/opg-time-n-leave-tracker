@@ -4,7 +4,7 @@ import { HttpError } from "../views/problem-view.js";
 const scope = (req) => {
   if (!req.actor?.employee_id) throw new HttpError(403, "Forbidden", "A tenant workspace is required.");
   const hr = req.actor.capabilities?.includes("users:write");
-  return hr ? { clause: "e.status = 'active'", values: [] } : { clause: "e.manager_id = $2", values: [req.actor.employee_id] };
+  return hr ? { clause: "e.status = 'active'", values: [] } : { clause: "e.manager_id = $2 AND e.employee_id <> $2", values: [req.actor.employee_id] };
 };
 
 const page = (req) => ({
@@ -29,7 +29,7 @@ export const teamTimesheets = async (req) => {
 
 export const teamAlerts = async (req) => {
   const { clause, values } = scope(req);
-  const result = await pool.query(`SELECT e.employee_id, e.name, j.title AS job_title, j.standard_weekly_mins, j.is_ot_eligible, j.max_daily_mins, COALESCE(sum(s.worked_mins),0)::integer AS worked_mins, COALESCE(sum(s.scheduled_mins),0)::integer AS scheduled_mins, max(s.worked_mins)::integer AS max_daily_worked FROM employees e JOIN job_profiles j ON j.tenant_id=e.tenant_id AND j.job_id=e.job_id LEFT JOIN attendance_summaries s ON s.tenant_id=e.tenant_id AND s.employee_id=e.employee_id WHERE e.tenant_id=$1 AND ${clause} GROUP BY e.employee_id,e.name,j.title,j.standard_weekly_mins,j.is_ot_eligible,j.max_daily_mins ORDER BY e.name`, [req.tenantId, ...values]);
+  const result = await pool.query(`SELECT e.employee_id, e.name, j.title AS job_title, j.standard_weekly_mins, j.is_ot_eligible, j.max_daily_mins, date_trunc('week', CURRENT_DATE)::date AS week_start, (date_trunc('week', CURRENT_DATE) + interval '6 days')::date AS week_end, COALESCE(sum(s.worked_mins),0)::integer AS worked_mins, COALESCE(sum(s.scheduled_mins),0)::integer AS scheduled_mins, max(s.worked_mins)::integer AS max_daily_worked FROM employees e JOIN job_profiles j ON j.tenant_id=e.tenant_id AND j.job_id=e.job_id LEFT JOIN attendance_summaries s ON s.tenant_id=e.tenant_id AND s.employee_id=e.employee_id AND s.local_date >= date_trunc('week', CURRENT_DATE)::date AND s.local_date < (date_trunc('week', CURRENT_DATE) + interval '7 days')::date WHERE e.tenant_id=$1 AND ${clause} GROUP BY e.employee_id,e.name,j.title,j.standard_weekly_mins,j.is_ot_eligible,j.max_daily_mins ORDER BY e.name`, [req.tenantId, ...values]);
   return result.rows.map((row) => { const percent = row.standard_weekly_mins ? Math.round((row.worked_mins / row.standard_weekly_mins) * 100) : 0; const type = row.max_daily_mins && row.max_daily_worked > row.max_daily_mins ? "daily_limit_breach" : percent >= 100 ? (row.is_ot_eligible ? "overtime" : "limit_exception") : percent >= 80 ? "approaching" : null; return type ? { ...row, type, severity: type === "approaching" ? "warning" : "critical", variance_mins: row.worked_mins - row.standard_weekly_mins, percent } : null; }).filter(Boolean);
 };
 
