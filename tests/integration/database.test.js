@@ -212,7 +212,6 @@ test(
       .post("/api/v1/hr/directory")
       .set("x-csrf-token", context.body.csrf_token)
       .send({
-        employee_number: `NS-${Date.now()}`,
         name: "Integration Directory User",
         job_id: "ns-coordinator",
         manager_id: "ns-alex",
@@ -225,6 +224,7 @@ test(
         account: { enabled: true, email: `directory-${Date.now()}@dev.local`, password: "Temporary-Password-2026!", roles: ["Employee"] },
       });
     assert.equal(directory.status, 201);
+    assert.match(directory.body.employee.employee_number, /^NORTHSTAR-[A-F0-9]{8}$/);
     assert.equal(Object.prototype.hasOwnProperty.call(directory.body, "password"), false);
 
     const unprovisionedEmail = `existing-directory-${Date.now()}@dev.local`;

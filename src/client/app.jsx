@@ -2429,7 +2429,7 @@ function Directory({ data, refresh, notify }) {
   const openEdit = (item) => { const account = userByEmployee.get(item.employee_id); setForm({ ...defaults(), ...item, manager_id: item.manager_id || "", schedule_id: item.work_schedule?.schedule_id || "", account_enabled: false, account_exists: Boolean(account), email: account?.email || "", roles: ["Employee"], password: "" }); setModal(item); };
   const submit = async (event) => {
     event.preventDefault();
-    const body = { employee_number: form.employee_number, name: form.name, job_id: form.job_id, manager_id: form.manager_id || null, department_id: form.department_id, location_id: form.location_id, holiday_calendar_id: form.holiday_calendar_id, work_schedule: { schedule_id: form.schedule_id }, start_date: form.start_date, status: form.status };
+    const body = { employee_number: modal === "create" ? undefined : form.employee_number, name: form.name, job_id: form.job_id, manager_id: form.manager_id || null, department_id: form.department_id, location_id: form.location_id, holiday_calendar_id: form.holiday_calendar_id, work_schedule: { schedule_id: form.schedule_id }, start_date: form.start_date, status: form.status };
     try {
       if ((modal === "create" || !form.account_exists) && form.account_enabled) body.account = { enabled: true, email: form.email, password: form.password, roles: form.roles };
       if (modal === "create") await api.createDirectoryEntry(body); else await api.updateDirectoryEntry(modal.employee_id, body);
@@ -3543,6 +3543,7 @@ function Field({ label, onChange, error, helperText, id, className, required = f
   const generatedId = useId();
   const inputId = id || `field-${generatedId.replace(/:/g, "")}`;
   if (label === "Organization ID" && window.location.hash.startsWith("#/register")) return null;
+  if (label === "Employee number") return null;
   const contextualHelperText = helperText || (label === "Organization name" && window.location.hash.startsWith("#/register") ? "Your workspace identifier is generated automatically." : "");
   const helperId = contextualHelperText ? `${inputId}-help` : "";
   const errorId = error ? `${inputId}-error` : "";
