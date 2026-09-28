@@ -3546,7 +3546,7 @@ function Field({ label, onChange, error, helperText, id, className, required = f
   if (label === "Organization ID" && window.location.hash.startsWith("#/register")) return null;
   if (label === "Employee number") return null;
   const invitePassword = label === "Temporary password";
-  const contextualHelperText = helperText || (invitePassword ? "Optional: leave blank to send a one-time invitation link." : label === "Organization name" && window.location.hash.startsWith("#/register") ? "Your workspace identifier is generated automatically." : "");
+  const contextualHelperText = helperText || (invitePassword ? "Optional: leave blank to generate a unique one-time invitation link to copy and paste." : label === "Organization name" && window.location.hash.startsWith("#/register") ? "Your workspace identifier is generated automatically." : "");
   const helperId = contextualHelperText ? `${inputId}-help` : "";
   const errorId = error ? `${inputId}-error` : "";
   const { ["aria-describedby"]: externalDescribedBy, ...inputProps } = props;
