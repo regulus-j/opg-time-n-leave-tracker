@@ -338,7 +338,14 @@ test(
     assert.equal(provision.status, 201);
     assert.equal(provision.body.tenant_id, tenantId);
     assert.equal(provision.body.invitation.status, "pending");
+    assert.match(provision.body.invite_url, /#\/accept-invitation\?token=/);
     assert.equal(Object.prototype.hasOwnProperty.call(provision.body, "invite_token"), false);
+    const generatedInvite = await admin
+      .post(`/api/v1/platform/tenants/${tenantId}/invitation/link`)
+      .set("x-csrf-token", provisioned.body.csrf_token)
+      .send({});
+    assert.equal(generatedInvite.status, 200);
+    assert.match(generatedInvite.body.invite_url, /#\/accept-invitation\?token=/);
 
     const duplicate = await admin
       .post("/api/v1/platform/tenants")
@@ -375,7 +382,7 @@ test(
     const invitationAgent = request.agent(app);
     const accepted = await invitationAgent
       .post("/api/v1/auth/invitations/accept")
-      .send({ token: process.env.INVITATION_TEST_TOKEN, password: "Invited-HR-password-2026!" });
+      .send({ token: new URL(generatedInvite.body.invite_url).hash.split("token=")[1], password: "Invited-HR-password-2026!" });
     assert.equal(accepted.status, 200);
     assert.equal(accepted.body.tenant_id, tenantId);
     assert.ok(accepted.body.roles.includes("HR Manager"));

@@ -33,6 +33,8 @@ Required server-side variables include `DATABASE_URL`, `DB_SSL=true`, `DB_SSL_RE
 
 `INVITATION_DELIVERY_URL` is a server-side webhook used when a platform administrator provisions an organization. It receives a JSON payload containing `to`, `organization_name`, `invite_url`, and `expires_at`. The application stores only a SHA-256 token hash, so the webhook must deliver the link immediately. Invitation acceptance is available at `/#/accept-invitation`. Public organization registration is available at `/#/register` and `POST /api/v1/auth/register-tenant`; it activates the registering HR administrator immediately and is protected by `REGISTRATION_RATE_MAX` and `REGISTRATION_RATE_WINDOW_MS` (defaults: 5 attempts per hour per IP/email key).
 
+Platform Administrators can copy a one-time invitation link from the organization workflow. Link generation rotates the pending invitation, returns the link only to the authorized platform session, and records the action in the platform audit log. Treat the link as a bearer credential and share it only with the intended HR administrator.
+
 If the Vercel function reports `SELF_SIGNED_CERT_IN_CHAIN`, download the Supabase root certificate from Database Settings → SSL Configuration. Add it to Vercel as `DB_SSL_CA` (preserving PEM newlines) or as `DB_SSL_CA_BASE64` using a base64-encoded PEM. Keep `DB_SSL_REJECT_UNAUTHORIZED=true`; do not bypass certificate verification in Production.
 
 Deploy Preview first. Confirm SPA refreshes, `/api/v1/auth/me`, secure cookies, CSRF writes, reports, CSV downloads, and tenant context switching before promoting the deployment.

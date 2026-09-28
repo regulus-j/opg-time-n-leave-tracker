@@ -313,7 +313,7 @@ export const createTenant = async (req) => {
     expiresAt: created.expiresAt,
   });
   const tenant = await pool.query(`${tenantQuery} WHERE t.tenant_id=$1`, [created.tenantId]);
-  return { ...mapTenant(tenant.rows[0]), invitation_delivery: delivery.status };
+  return { ...mapTenant(tenant.rows[0]), invitation_delivery: delivery.status, invite_url: invitationUrl(req, created.token), invite_expires_at: created.expiresAt };
 };
 
 export const updateTenant = async (req) => {
@@ -376,7 +376,40 @@ export const resendInvitation = async (req) => {
     token: created.token,
     expiresAt: created.expiresAt,
   });
-  return { invitation_delivery: delivery.status, expires_at: created.expiresAt };
+  return { invitation_delivery: delivery.status, invite_url: invitationUrl(req, created.token), expires_at: created.expiresAt };
+};
+
+export const generateInvitationLink = async (req) => {
+  assertPlatformWrite(req);
+  const tenantId = normalizeTenantId(req.params.tenant_id);
+  const created = await withTransaction(async (client) => {
+    const tenant = await client.query("SELECT tenant_id,name FROM tenants WHERE tenant_id=$1", [tenantId]);
+    if (!tenant.rowCount) throw new HttpError(404, "Not Found", "Organization not found.");
+    const pending = await client.query(
+      `SELECT i.invite_id, i.email, i.user_id
+         FROM tenant_invitations i
+        WHERE i.tenant_id=$1 AND i.accepted_at IS NULL AND i.revoked_at IS NULL
+        ORDER BY i.created_at DESC LIMIT 1 FOR UPDATE`,
+      [tenantId],
+    );
+    if (!pending.rowCount)
+      throw new HttpError(409, "Invitation Unavailable", "There is no pending invitation to generate a link for.");
+    const token = invitationToken();
+    const expiresAt = new Date(Date.now() + invitationLifetimeHours() * 60 * 60 * 1000).toISOString();
+    await client.query("UPDATE tenant_invitations SET revoked_at=now() WHERE invite_id=$1", [pending.rows[0].invite_id]);
+    const inviteId = id();
+    await client.query(
+      `INSERT INTO tenant_invitations (invite_id,tenant_id,user_id,email,token_hash,expires_at,created_at,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [inviteId, tenantId, pending.rows[0].user_id, pending.rows[0].email, hashInvitationToken(token), expiresAt, now(), req.actor.platform_user_id || req.actor.user_id],
+    );
+    await auditPlatform(client, req, "tenant_invitation_link_generated", tenantId, "Platform administrator generated an invitation link", {
+      email: pending.rows[0].email,
+      invite_id: inviteId,
+    });
+    return { email: pending.rows[0].email, token, expiresAt, organizationName: tenant.rows[0].name };
+  });
+  return { invite_url: invitationUrl(req, created.token), expires_at: created.expiresAt, email: created.email };
 };
 
 export const listAccess = async (req) => {

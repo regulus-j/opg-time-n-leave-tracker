@@ -119,6 +119,11 @@ export const api = {
       method: 'POST',
       body: { reason },
     }),
+  generatePlatformInvitationLink: (tenant_id: string) =>
+    request<Record<string, unknown>>(`/platform/tenants/${tenant_id}/invitation/link`, {
+      method: 'POST',
+      body: {},
+    }),
   platformAccess: () => request<Array<Record<string, unknown>>>('/platform/access'),
   platformAudit: () => request<Array<Record<string, unknown>>>('/platform/audit-events'),
   platformSettings: () => request<Array<Record<string, unknown>>>('/platform/settings'),

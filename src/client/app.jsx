@@ -3669,13 +3669,20 @@ function PlatformOverview({ onEnter, notify }) {
   const close = () => { setModal(null); setForm(null); };
   const openCreate = () => { setForm(defaults()); setModal("create"); };
   const openEdit = (tenant) => { setForm({ ...defaults(), ...tenant, support_email: tenant.settings?.support_email || "" }); setModal("edit"); };
+  const copyInvitationUrl = async (url) => {
+    if (!url) return false;
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(url);
+    else window.prompt("Copy this one-time invitation link:", url);
+    return true;
+  };
   const save = async (event) => {
     event.preventDefault();
     setBusy(true);
     try {
       if (modal === "create") {
         const created = await api.createPlatformTenant({ ...form, week_start: Number(form.week_start), initial_admin: form.initial_admin, support_email: form.support_email || undefined });
-        notify(created.invitation_delivery === "sent" ? "Organization created and invitation sent." : created.invitation_delivery === "failed" ? "Organization created, but the invitation could not be delivered. Use Resend invite after checking delivery configuration." : "Organization created. Invitation delivery is not configured.");
+        const copied = await copyInvitationUrl(created.invite_url);
+        notify(copied ? "Organization created. Invitation link copied." : created.invitation_delivery === "sent" ? "Organization created and invitation sent." : created.invitation_delivery === "failed" ? "Organization created, but the invitation could not be delivered. Use Resend invite after checking delivery configuration." : "Organization created. Invitation delivery is not configured.");
       } else {
         await api.updatePlatformTenant(form.tenant_id, { name: form.name, timezone: form.timezone, locale: form.locale, week_start: Number(form.week_start), currency: form.currency, support_email: form.support_email || undefined });
         notify("Organization details updated.");
@@ -3700,7 +3707,16 @@ function PlatformOverview({ onEnter, notify }) {
   const resend = async (tenant) => {
     try {
       const result = await api.resendPlatformInvitation(tenant.tenant_id, "Platform administrator resent the HR invitation");
-      notify(result.invitation_delivery === "sent" ? "Invitation resent." : result.invitation_delivery === "failed" ? "Invitation refreshed, but delivery failed." : "Invitation refreshed; delivery is not configured.");
+      const copied = await copyInvitationUrl(result.invite_url);
+      notify(copied ? "Invitation refreshed. The one-time link was copied." : result.invitation_delivery === "sent" ? "Invitation resent." : result.invitation_delivery === "failed" ? "Invitation refreshed, but delivery failed." : "Invitation refreshed; delivery is not configured.");
+      await load();
+    } catch (failure) { notify(failure.message, "error"); }
+  };
+  const copyInviteLink = async (tenant) => {
+    try {
+      const result = await api.generatePlatformInvitationLink(tenant.tenant_id);
+      const copied = await copyInvitationUrl(result.invite_url);
+      notify(copied ? "Invitation link generated and copied. Share it securely with the HR administrator." : "Invitation link generated.");
       await load();
     } catch (failure) { notify(failure.message, "error"); }
   };
