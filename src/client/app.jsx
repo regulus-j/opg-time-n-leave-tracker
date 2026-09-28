@@ -2431,9 +2431,10 @@ function Directory({ data, refresh, notify }) {
     event.preventDefault();
     const body = { employee_number: modal === "create" ? undefined : form.employee_number, name: form.name, job_id: form.job_id, manager_id: form.manager_id || null, department_id: form.department_id, location_id: form.location_id, holiday_calendar_id: form.holiday_calendar_id, work_schedule: { schedule_id: form.schedule_id }, start_date: form.start_date, status: form.status };
     try {
-      if ((modal === "create" || !form.account_exists) && form.account_enabled) body.account = { enabled: true, email: form.email, password: form.password, roles: form.roles };
-      if (modal === "create") await api.createDirectoryEntry(body); else await api.updateDirectoryEntry(modal.employee_id, body);
-      notify(modal === "create" ? "Employee added to the directory." : body.account ? "Employee updated and portal login created." : "Employee assignment updated."); setModal(null); await refresh();
+      if ((modal === "create" || !form.account_exists) && form.account_enabled) body.account = { enabled: true, email: form.email, password: form.password, invite: !String(form.password || "").trim(), roles: form.roles };
+      const result = modal === "create" ? await api.createDirectoryEntry(body) : await api.updateDirectoryEntry(modal.employee_id, body);
+      if (result?.account?.invite_url && navigator.clipboard?.writeText) await navigator.clipboard.writeText(result.account.invite_url);
+      notify(result?.account?.invite_url ? `${modal === "create" ? "Employee added" : "Employee updated"}. The one-time invitation link was copied.` : modal === "create" ? "Employee added to the directory." : body.account ? "Employee updated and portal login created." : "Employee assignment updated."); setModal(null); await refresh();
     } catch (error) { notify(error.message, "error"); }
   };
   const resetPassword = async (item) => { if (!window.confirm(`Reset the portal password for ${item.name}? The new credential will not be displayed.`)) return; try { await api.resetDirectoryPassword(item.employee_id); notify("Password reset completed securely."); } catch (error) { notify(error.message, "error"); } };
@@ -3544,20 +3545,21 @@ function Field({ label, onChange, error, helperText, id, className, required = f
   const inputId = id || `field-${generatedId.replace(/:/g, "")}`;
   if (label === "Organization ID" && window.location.hash.startsWith("#/register")) return null;
   if (label === "Employee number") return null;
-  const contextualHelperText = helperText || (label === "Organization name" && window.location.hash.startsWith("#/register") ? "Your workspace identifier is generated automatically." : "");
+  const invitePassword = label === "Temporary password";
+  const contextualHelperText = helperText || (invitePassword ? "Optional: leave blank to send a one-time invitation link." : label === "Organization name" && window.location.hash.startsWith("#/register") ? "Your workspace identifier is generated automatically." : "");
   const helperId = contextualHelperText ? `${inputId}-help` : "";
   const errorId = error ? `${inputId}-error` : "";
   const { ["aria-describedby"]: externalDescribedBy, ...inputProps } = props;
   const describedBy = [externalDescribedBy, helperId, errorId].filter(Boolean).join(" ") || undefined;
   return (
     <label className="block text-sm font-semibold" htmlFor={inputId}>
-      {label}{required ? <span aria-hidden="true" className="ml-1 text-red-700">*</span> : null}
+      {label}{required && !invitePassword ? <span aria-hidden="true" className="ml-1 text-red-700">*</span> : null}
       <input
         id={inputId}
         aria-label={label}
         aria-invalid={Boolean(error)}
         aria-describedby={describedBy}
-        required={required}
+        required={required && !invitePassword}
         onChange={(e) => onChange(e.target.value)}
         className={`mt-2 h-11 w-full rounded-lg border bg-white px-3 outline-none focus:ring-2 ${error ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"} ${className || ""}`}
         {...inputProps}

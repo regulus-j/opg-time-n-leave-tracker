@@ -147,6 +147,8 @@ export const api = {
     request<Record<string, unknown>>(`/hr/directory/${employee_id}`, { method: "PUT", body }),
   resetDirectoryPassword: (employee_id: string) =>
     request<Record<string, unknown>>(`/hr/directory/${employee_id}/reset-password`, { method: "POST", body: {} }),
+  generateDirectoryInvitationLink: (employee_id: string) =>
+    request<Record<string, unknown>>(`/hr/directory/${employee_id}/invitation/link`, { method: "POST", body: {} }),
   createAttendanceOverride: (body: Record<string, unknown>) =>
     request<Record<string, unknown>>("/hr/attendance-overrides", { method: "POST", body }),
   myJobProfile: () => request<Record<string, unknown>>("/hr/my-job-profile"),

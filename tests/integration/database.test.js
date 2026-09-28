@@ -261,6 +261,33 @@ test(
     assert.equal(existingLogin.status, 200);
     assert.ok(existingLogin.body.roles.includes("Reporting Manager"));
 
+    const invitedEmail = `employee-invite-${Date.now()}@dev.local`;
+    const invitedDirectory = await admin
+      .post("/api/v1/hr/directory")
+      .set("x-csrf-token", context.body.csrf_token)
+      .send({
+        name: "Invited Directory User",
+        job_id: "ns-coordinator",
+        manager_id: "ns-alex",
+        department_id: "ns-ops",
+        location_id: "ns-manila",
+        holiday_calendar_id: "ns-ph",
+        work_schedule: { schedule_id: "ns-standard" },
+        start_date: "2026-09-18",
+        status: "active",
+        account: { enabled: true, invite: true, email: invitedEmail, roles: ["Employee"] },
+      });
+    assert.equal(invitedDirectory.status, 201);
+    assert.equal(invitedDirectory.body.account.status, "inactive");
+    assert.match(invitedDirectory.body.account.invite_url, /#\/accept-invitation\?token=/);
+    assert.equal(Object.prototype.hasOwnProperty.call(invitedDirectory.body.account, "password"), false);
+    const invitedEmployeeAgent = request.agent(app);
+    const invitedEmployeeAccepted = await invitedEmployeeAgent
+      .post("/api/v1/auth/invitations/accept")
+      .send({ token: new URL(invitedDirectory.body.account.invite_url).hash.split("token=")[1], password: "Employee-Invite-password-2026!" });
+    assert.equal(invitedEmployeeAccepted.status, 200);
+    assert.ok(invitedEmployeeAccepted.body.roles.includes("Employee"));
+
     const registrationAgent = request.agent(app);
     const registeredTenantId = `public-${Date.now()}`;
     const registered = await registrationAgent

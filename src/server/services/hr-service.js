@@ -6,6 +6,13 @@ import { HttpError } from "../views/problem-view.js";
 const id = (prefix) => `${prefix}-${crypto.randomUUID()}`;
 const now = () => new Date().toISOString();
 const generatedEmployeeNumber = (tenantId, employeeId) => `${tenantId.toUpperCase()}-${employeeId.slice(-8).toUpperCase()}`;
+const invitationToken = () => crypto.randomBytes(32).toString("base64url");
+const invitationHash = (token) => crypto.createHash("sha256").update(token).digest("hex");
+const invitationUrl = (req, token) => {
+  const base = (process.env.INVITATION_BASE_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+  return `${base}/#/accept-invitation?token=${encodeURIComponent(token)}`;
+};
+const invitationExpiry = () => new Date(Date.now() + Math.min(Math.max(Number(process.env.INVITATION_TTL_HOURS || 72), 1), 720) * 60 * 60 * 1000).toISOString();
 
 const roleCapabilities = {
   Employee: ["attendance:write", "attendance-adjustments:write", "leave:write", "leave-requests:write", "overtime-requests:write"],
@@ -92,9 +99,12 @@ const accountCapabilities = (roles = [], requested = []) => {
 
 const createPortalAccount = async (client, tenantId, employee, account) => {
   assertString(account?.email, "account.email");
-  assertString(account?.password, "account.password");
-  if (account.password.length < 12)
-    throw new HttpError(422, "Invalid Request", "Account password must be at least 12 characters.");
+  const invite = account.invite === true;
+  if (!invite) {
+    assertString(account?.password, "account.password");
+    if (account.password.length < 12)
+      throw new HttpError(422, "Invalid Request", "Account password must be at least 12 characters.");
+  }
   const email = account.email.trim();
   const duplicate = await client.query(
     `SELECT 1 FROM auth_credentials WHERE lower(email)=lower($1)
@@ -104,24 +114,45 @@ const createPortalAccount = async (client, tenantId, employee, account) => {
   );
   if (duplicate.rowCount)
     throw new HttpError(409, "Duplicate Email", "This email is already assigned to an account.");
+  if (invite) {
+    const pendingEmail = await client.query(
+      "SELECT 1 FROM user_invitations WHERE tenant_id=$1 AND lower(email)=lower($2) AND accepted_at IS NULL AND revoked_at IS NULL LIMIT 1",
+      [tenantId, email],
+    );
+    if (pendingEmail.rowCount)
+      throw new HttpError(409, "Invitation Pending", "A pending invitation already exists for this email.");
+  }
   const existing = await client.query(
-    "SELECT 1 FROM users WHERE tenant_id=$1 AND employee_id=$2 AND status='active' LIMIT 1",
+    "SELECT status FROM users WHERE tenant_id=$1 AND employee_id=$2 LIMIT 1",
     [tenantId, employee.employee_id],
   );
-  if (existing.rowCount)
+  if (existing.rows.some((row) => row.status === "active"))
     throw new HttpError(409, "Account Already Active", "This employee already has an active portal account.");
+  if (existing.rowCount && invite)
+    throw new HttpError(409, "Invitation Pending", "This employee already has a pending portal invitation.");
   const userId = account.user_id || id("user");
   const capabilities = accountCapabilities(account.roles, account.capabilities);
   const displayName = account.display_name || employee.name;
   await client.query(
-    "INSERT INTO users (user_id,tenant_id,employee_id,display_name,email,capabilities,status) VALUES ($1,$2,$3,$4,$5,$6,'active')",
-    [userId, tenantId, employee.employee_id, displayName, email, capabilities],
+    "INSERT INTO users (user_id,tenant_id,employee_id,display_name,email,capabilities,status) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+    [userId, tenantId, employee.employee_id, displayName, email, capabilities, invite ? "inactive" : "active"],
   );
+  if (!invite) {
+    await client.query(
+      "INSERT INTO auth_credentials (user_id,tenant_id,email,password_hash) VALUES ($1,$2,$3,$4)",
+      [userId, tenantId, email, await hashPassword(account.password)],
+    );
+    return { user_id: userId, display_name: displayName, email, roles: account.roles || ["Employee"], status: "active" };
+  }
+  const token = invitationToken();
+  const expiresAt = invitationExpiry();
+  const inviteId = id("invite");
   await client.query(
-    "INSERT INTO auth_credentials (user_id,tenant_id,email,password_hash) VALUES ($1,$2,$3,$4)",
-    [userId, tenantId, email, await hashPassword(account.password)],
+    `INSERT INTO user_invitations (invite_id,tenant_id,user_id,employee_id,email,token_hash,expires_at,created_at,created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8)`,
+    [inviteId, tenantId, userId, employee.employee_id, email, invitationHash(token), expiresAt, account.created_by],
   );
-  return { user_id: userId, display_name: displayName, email, roles: account.roles || ["Employee"], status: "active" };
+  return { user_id: userId, display_name: displayName, email, roles: account.roles || ["Employee"], status: "inactive", invite_url: invitationUrl(account.request, token), invite_expires_at: expiresAt };
 };
 
 export const createDirectoryEntry = async (req) => withTransaction(async (client) => {
@@ -137,7 +168,7 @@ export const createDirectoryEntry = async (req) => withTransaction(async (client
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     [employee.employee_id, req.tenantId, employee.employee_number, employee.name, employee.job_id, employee.manager_id, employee.department_id, employee.location_id, employee.holiday_calendar_id, employee.work_schedule, employee.start_date, employee.status],
   );
-  const account = body.account?.enabled ? await createPortalAccount(client, req.tenantId, employee, body.account) : null;
+  const account = body.account?.enabled ? await createPortalAccount(client, req.tenantId, employee, { ...body.account, created_by: req.actor.user_id, request: req }) : null;
   await audit(client, req, "directory_create", "Employee", employee.employee_id, "HR directory entry created", { account_created: Boolean(account) });
   return { employee, account };
 });
@@ -155,7 +186,7 @@ export const updateDirectoryEntry = async (req) => withTransaction(async (client
     [employee.employee_number, employee.name, employee.job_id, employee.manager_id, employee.department_id, employee.location_id, employee.holiday_calendar_id, employee.work_schedule, employee.start_date, employee.status, req.tenantId, employee.employee_id],
   );
   const account = req.body?.account?.enabled
-    ? await createPortalAccount(client, req.tenantId, employee, req.body.account)
+    ? await createPortalAccount(client, req.tenantId, employee, { ...req.body.account, created_by: req.actor.user_id, request: req })
     : null;
   const directReports = await client.query("SELECT employee_id FROM employees WHERE tenant_id=$1 AND manager_id=$2 AND status='active' ORDER BY employee_id", [req.tenantId, employee.employee_id]);
   await audit(client, req, "directory_update", "Employee", employee.employee_id, "HR directory assignment updated", { manager_id: employee.manager_id, account_created: Boolean(account) });
@@ -171,6 +202,29 @@ export const resetPassword = async (req) => withTransaction(async (client) => {
   const resetAt = now();
   await audit(client, req, "directory_password_reset", "User", userId, "HR simulated a password reset");
   return { employee_id: req.params.employee_id, user_id: userId, reset: true, reset_at: resetAt };
+});
+
+export const generateDirectoryInvitationLink = async (req) => withTransaction(async (client) => {
+  const result = await client.query(
+    `SELECT u.user_id, u.email, u.status, e.name
+       FROM users u JOIN employees e ON e.tenant_id=u.tenant_id AND e.employee_id=u.employee_id
+      WHERE u.tenant_id=$1 AND u.employee_id=$2 FOR UPDATE`,
+    [req.tenantId, req.params.employee_id],
+  );
+  if (!result.rowCount) throw new HttpError(404, "Not Found", "No portal user exists for this employee.");
+  const user = result.rows[0];
+  if (user.status === "active") throw new HttpError(409, "Account Already Active", "This employee already has an active portal account.");
+  const token = invitationToken();
+  const expiresAt = invitationExpiry();
+  await client.query("UPDATE user_invitations SET revoked_at=now() WHERE tenant_id=$1 AND user_id=$2 AND accepted_at IS NULL AND revoked_at IS NULL", [req.tenantId, user.user_id]);
+  const inviteId = id("invite");
+  await client.query(
+    `INSERT INTO user_invitations (invite_id,tenant_id,user_id,employee_id,email,token_hash,expires_at,created_at,created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8)`,
+    [inviteId, req.tenantId, user.user_id, req.params.employee_id, user.email, invitationHash(token), expiresAt, req.actor.user_id],
+  );
+  await audit(client, req, "user_invitation_link_generated", "User", user.user_id, "Portal invitation link generated", { invite_id: inviteId, expires_at: expiresAt });
+  return { employee_id: req.params.employee_id, email: user.email, invite_url: invitationUrl(req, token), invite_expires_at: expiresAt };
 });
 
 export const getOwnJobProfile = async (req) => withTransaction(async (client) => {

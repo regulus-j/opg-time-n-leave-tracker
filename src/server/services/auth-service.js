@@ -57,11 +57,16 @@ export const acceptInvitation = async (token, password) => {
   return withTransaction(async (client) => {
     const result = await client.query(
       `SELECT i.invite_id, i.tenant_id, i.email, i.expires_at, i.accepted_at, i.revoked_at,
-              u.user_id, u.employee_id, u.status AS user_status
+              u.user_id, u.employee_id, u.status AS user_status, 'tenant' AS invitation_kind
          FROM tenant_invitations i
          JOIN users u ON u.tenant_id=i.tenant_id AND u.user_id=i.user_id
         WHERE i.token_hash=$1
-        FOR UPDATE`,
+       UNION ALL
+       SELECT i.invite_id, i.tenant_id, i.email, i.expires_at, i.accepted_at, i.revoked_at,
+              u.user_id, u.employee_id, u.status AS user_status, 'user' AS invitation_kind
+         FROM user_invitations i
+         JOIN users u ON u.tenant_id=i.tenant_id AND u.user_id=i.user_id
+        WHERE i.token_hash=$1`,
       [invitationHash(token)],
     );
     const invitation = result.rows[0];
@@ -89,14 +94,14 @@ export const acceptInvitation = async (token, password) => {
       [invitation.tenant_id, invitation.employee_id],
     );
     await client.query(
-      "UPDATE tenant_invitations SET accepted_at=now() WHERE invite_id=$1",
+      `UPDATE ${invitation.invitation_kind === "user" ? "user_invitations" : "tenant_invitations"} SET accepted_at=now() WHERE invite_id=$1`,
       [invitation.invite_id],
     );
     await client.query(
       `INSERT INTO audit_events
         (event_id,tenant_id,actor_user_id,actor_role,action,target_type,target_id,occurred_at,reason,metadata)
-       VALUES ($1,$2,$3,'tenant_admin','invitation_accepted','User',$3,now(),'Initial HR administrator invitation accepted',$4::jsonb)`,
-      [crypto.randomUUID(), invitation.tenant_id, invitation.user_id, JSON.stringify({ invite_id: invitation.invite_id })],
+       VALUES ($1,$2,$3,$4,'invitation_accepted','User',$3,now(),$5,$6::jsonb)`,
+      [crypto.randomUUID(), invitation.tenant_id, invitation.user_id, invitation.invitation_kind === "user" ? "employee" : "tenant_admin", invitation.invitation_kind === "user" ? "Portal user invitation accepted" : "Initial HR administrator invitation accepted", JSON.stringify({ invite_id: invitation.invite_id })],
     );
     return { email: invitation.email };
   });
