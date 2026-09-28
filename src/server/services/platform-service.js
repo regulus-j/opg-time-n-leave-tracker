@@ -127,10 +127,10 @@ const auditPlatform = async (client, req, action, targetId, reason = null, metad
   );
 };
 
-export const provisionTenantDefaults = async (client, { tenantId, organization, adminName, adminEmail, active = true }) => {
+export const provisionTenantDefaults = async (client, { tenantId, organization, adminName, adminEmail, active = true, duplicateMessage = "An organization with this ID already exists." }) => {
   const duplicate = await client.query("SELECT 1 FROM tenants WHERE tenant_id=$1", [tenantId]);
   if (duplicate.rowCount)
-    throw new HttpError(409, "Duplicate Organization", "An organization with this ID already exists.");
+    throw new HttpError(409, "Duplicate Organization", duplicateMessage);
   const usedEmail = await client.query(
     `SELECT 1 FROM users WHERE lower(email)=lower($1)
      UNION ALL SELECT 1 FROM auth_credentials WHERE lower(email)=lower($1)

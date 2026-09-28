@@ -26,6 +26,7 @@ export const registerTenant = async (body) => {
       adminName,
       adminEmail,
       active: true,
+      duplicateMessage: "An organization with that name is already registered. Try a more specific organization name.",
     });
     await client.query(
       "INSERT INTO auth_credentials (user_id,tenant_id,email,password_hash) VALUES ($1,$2,$3,$4)",

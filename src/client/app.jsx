@@ -321,6 +321,11 @@ function Login({ onLogin }) {
   );
 }
 
+const registrationTenantSlug = (name) => {
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+  return slug.length >= 2 ? slug : `org-${slug || "workspace"}`.slice(0, 48);
+};
+
 function TenantRegistration({ onLogin }) {
   const [form, setForm] = useState({ tenant_id: "", name: "", timezone: "Asia/Manila", locale: "en-PH", currency: "PHP", week_start: "1", support_email: "", adminName: "", adminEmail: "", password: "", confirmPassword: "" });
   const [errors, setErrors] = useState({});
@@ -330,7 +335,6 @@ function TenantRegistration({ onLogin }) {
   const submit = async (event) => {
     event.preventDefault();
     const next = {};
-    if (!/^[a-z0-9][a-z0-9-]{1,47}$/.test(form.tenant_id)) next.tenant_id = "Use 2–48 lowercase letters, numbers, or hyphens.";
     if (!form.name.trim()) next.name = "Enter your organization name.";
     if (!form.adminName.trim()) next.adminName = "Enter the initial HR administrator’s name.";
     if (!/^\S+@\S+\.\S+$/.test(form.adminEmail.trim())) next.adminEmail = "Enter a valid administrator email address.";
@@ -339,7 +343,7 @@ function TenantRegistration({ onLogin }) {
     if (Object.keys(next).length) { setErrors(next); setError(""); return; }
     setBusy(true); setErrors({}); setError("");
     try {
-      const account = await api.registerTenant({ tenant_id: form.tenant_id, name: form.name.trim(), timezone: form.timezone, locale: form.locale, currency: form.currency, week_start: Number(form.week_start), support_email: form.support_email.trim() || undefined, admin: { display_name: form.adminName.trim(), email: form.adminEmail.trim(), password: form.password } });
+      const account = await api.registerTenant({ tenant_id: registrationTenantSlug(form.name), name: form.name.trim(), timezone: form.timezone, locale: form.locale, currency: form.currency, week_start: Number(form.week_start), support_email: form.support_email.trim() || undefined, admin: { display_name: form.adminName.trim(), email: form.adminEmail.trim(), password: form.password } });
       localStorage.setItem("tlt_has_session", "1");
       onLogin(account);
       window.location.hash = "/app/dashboard";
@@ -3538,7 +3542,9 @@ function LocalDateTime() {
 function Field({ label, onChange, error, helperText, id, className, required = false, ...props }) {
   const generatedId = useId();
   const inputId = id || `field-${generatedId.replace(/:/g, "")}`;
-  const helperId = helperText ? `${inputId}-help` : "";
+  if (label === "Organization ID" && window.location.hash.startsWith("#/register")) return null;
+  const contextualHelperText = helperText || (label === "Organization name" && window.location.hash.startsWith("#/register") ? "Your workspace identifier is generated automatically." : "");
+  const helperId = contextualHelperText ? `${inputId}-help` : "";
   const errorId = error ? `${inputId}-error` : "";
   const { ["aria-describedby"]: externalDescribedBy, ...inputProps } = props;
   const describedBy = [externalDescribedBy, helperId, errorId].filter(Boolean).join(" ") || undefined;
@@ -3555,7 +3561,7 @@ function Field({ label, onChange, error, helperText, id, className, required = f
         className={`mt-2 h-11 w-full rounded-lg border bg-white px-3 outline-none focus:ring-2 ${error ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"} ${className || ""}`}
         {...inputProps}
       />
-      {helperText ? <p id={helperId} className="mt-1 text-xs font-normal text-muted-foreground">{helperText}</p> : null}
+      {contextualHelperText ? <p id={helperId} className="mt-1 text-xs font-normal text-muted-foreground">{contextualHelperText}</p> : null}
       {error ? <p id={errorId} role="alert" className="mt-1 text-sm font-normal text-red-700">{error}</p> : null}
     </label>
   );
