@@ -41,10 +41,11 @@ Set `npm run build` as the Vercel build command and `dist` as the output directo
 
 1. **Preview validation:** Deploy the release branch to a Vercel Preview connected only to staging Supabase.
 2. **HR smoke test:** Sign in as an HR Manager, open Organization → Directory, choose an employee showing **Not provisioned**, click **Edit**, enable **Create portal login and invitation link**, enter a test email, and save. Confirm the one-time invitation link is copied and the employee remains pending until the link is accepted.
-3. **Authentication check:** Sign out and log in with the new test account. Confirm the selected role and tenant are correct. Do not record or display the temporary password in screenshots or logs.
+3. **Authentication check:** Open the copied one-time invitation link, set a password on behalf of the test user, then sign out and log in with the new test account. Confirm the selected role and tenant are correct. Do not record or display passwords in screenshots or logs.
 4. **Negative checks:** Verify a malformed email, duplicate email, duplicate pending invitation, and a second provisioning attempt produce actionable 4xx errors and leave the employee update/account state unchanged.
 5. **Audit check:** Confirm the HR directory update audit event records `account_created: true` without password material.
-6. **Production approval:** After preview checks pass, run the migration against production, deploy the Vercel Production build, and repeat the smoke test using a disposable production test employee/account. Remove or deactivate the test account according to the organization's retention policy.
+6. **Reset-link check:** For an active test account, click **Reset password**, confirm the one-time reset link is copied, accept it with a new password, and verify the old password no longer works while the new password does.
+7. **Production approval:** After preview checks pass, run the migration against production, deploy the Vercel Production build, and repeat the smoke test using a disposable production test employee/account. Remove or deactivate the test account according to the organization's retention policy.
 
 ## Rollback and recovery
 

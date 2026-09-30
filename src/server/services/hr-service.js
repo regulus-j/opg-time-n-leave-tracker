@@ -194,14 +194,29 @@ export const updateDirectoryEntry = async (req) => withTransaction(async (client
 });
 
 export const resetPassword = async (req) => withTransaction(async (client) => {
-  const result = await client.query("SELECT u.user_id FROM users u WHERE u.tenant_id=$1 AND u.employee_id=$2 AND u.status='active' LIMIT 1", [req.tenantId, req.params.employee_id]);
+  const result = await client.query(
+    `SELECT u.user_id, u.email
+       FROM users u
+      WHERE u.tenant_id=$1 AND u.employee_id=$2 AND u.status='active'
+      LIMIT 1`,
+    [req.tenantId, req.params.employee_id],
+  );
   if (!result.rowCount) throw new HttpError(404, "Not Found", "No active portal account exists for this employee.");
-  const userId = result.rows[0].user_id;
-  const passwordHash = await hashPassword(crypto.randomBytes(32).toString("base64url"));
-  await client.query("UPDATE auth_credentials SET password_hash=$1,updated_at=now() WHERE tenant_id=$2 AND user_id=$3", [passwordHash, req.tenantId, userId]);
-  const resetAt = now();
-  await audit(client, req, "directory_password_reset", "User", userId, "HR simulated a password reset");
-  return { employee_id: req.params.employee_id, user_id: userId, reset: true, reset_at: resetAt };
+  const user = result.rows[0];
+  const token = invitationToken();
+  const expiresAt = invitationExpiry();
+  await client.query(
+    "UPDATE user_invitations SET revoked_at=now() WHERE tenant_id=$1 AND user_id=$2 AND accepted_at IS NULL AND revoked_at IS NULL",
+    [req.tenantId, user.user_id],
+  );
+  const inviteId = id("invite");
+  await client.query(
+    `INSERT INTO user_invitations (invite_id,tenant_id,user_id,employee_id,email,token_hash,expires_at,created_at,created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8)`,
+    [inviteId, req.tenantId, user.user_id, req.params.employee_id, user.email, invitationHash(token), expiresAt, req.actor.user_id],
+  );
+  await audit(client, req, "password_reset_link_generated", "User", user.user_id, "Password reset invitation link generated", { invite_id: inviteId, expires_at: expiresAt });
+  return { employee_id: req.params.employee_id, user_id: user.user_id, email: user.email, invite_url: invitationUrl(req, token), invite_expires_at: expiresAt };
 });
 
 export const generateDirectoryInvitationLink = async (req) => withTransaction(async (client) => {

@@ -75,15 +75,29 @@ export const acceptInvitation = async (token, password) => {
     if (invitation.accepted_at || invitation.revoked_at || new Date(invitation.expires_at).getTime() <= Date.now())
       throw new HttpError(400, "Invalid Invitation", "The invitation link is invalid or has expired.");
     const passwordHash = await hashPassword(password);
-    try {
-      await client.query(
-        "INSERT INTO auth_credentials (user_id,tenant_id,email,password_hash) VALUES ($1,$2,$3,$4)",
-        [invitation.user_id, invitation.tenant_id, invitation.email, passwordHash],
+    const isPasswordReset = invitation.user_status === "active";
+    if (isPasswordReset) {
+      const updated = await client.query(
+        "UPDATE auth_credentials SET email=$1,password_hash=$2,updated_at=now() WHERE tenant_id=$3 AND user_id=$4",
+        [invitation.email, passwordHash, invitation.tenant_id, invitation.user_id],
       );
-    } catch (error) {
-      if (error.code === "23505")
-        throw new HttpError(409, "Account Already Active", "This invitation can no longer be accepted.");
-      throw error;
+      if (!updated.rowCount) {
+        await client.query(
+          "INSERT INTO auth_credentials (user_id,tenant_id,email,password_hash) VALUES ($1,$2,$3,$4)",
+          [invitation.user_id, invitation.tenant_id, invitation.email, passwordHash],
+        );
+      }
+    } else {
+      try {
+        await client.query(
+          "INSERT INTO auth_credentials (user_id,tenant_id,email,password_hash) VALUES ($1,$2,$3,$4)",
+          [invitation.user_id, invitation.tenant_id, invitation.email, passwordHash],
+        );
+      } catch (error) {
+        if (error.code === "23505")
+          throw new HttpError(409, "Account Already Active", "This invitation can no longer be accepted.");
+        throw error;
+      }
     }
     await client.query(
       "UPDATE users SET status='active' WHERE tenant_id=$1 AND user_id=$2",
@@ -100,8 +114,20 @@ export const acceptInvitation = async (token, password) => {
     await client.query(
       `INSERT INTO audit_events
         (event_id,tenant_id,actor_user_id,actor_role,action,target_type,target_id,occurred_at,reason,metadata)
-       VALUES ($1,$2,$3,$4,'invitation_accepted','User',$3,now(),$5,$6::jsonb)`,
-      [crypto.randomUUID(), invitation.tenant_id, invitation.user_id, invitation.invitation_kind === "user" ? "employee" : "tenant_admin", invitation.invitation_kind === "user" ? "Portal user invitation accepted" : "Initial HR administrator invitation accepted", JSON.stringify({ invite_id: invitation.invite_id })],
+       VALUES ($1,$2,$3,$4,$5,'User',$3,now(),$6,$7::jsonb)`,
+      [
+        crypto.randomUUID(),
+        invitation.tenant_id,
+        invitation.user_id,
+        invitation.invitation_kind === "user" ? "employee" : "tenant_admin",
+        isPasswordReset ? "password_reset_accepted" : "invitation_accepted",
+        isPasswordReset
+          ? "Password reset invitation accepted"
+          : invitation.invitation_kind === "user"
+            ? "Portal user invitation accepted"
+            : "Initial HR administrator invitation accepted",
+        JSON.stringify({ invite_id: invitation.invite_id }),
+      ],
     );
     return { email: invitation.email };
   });

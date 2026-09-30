@@ -28,7 +28,7 @@ Development credentials are configured through `SEED_ADMIN_PASSWORD`, `SEED_HR_P
 
 Passwords are read from the seed-password variables; development-only examples are in `.env.example`. Sessions use HttpOnly cookies and CSRF protection. The platform administrator must explicitly enter a tenant before accessing organization data. Organizations can self-register publicly or be provisioned by the platform administrator. HR managers create employee portal users through a one-time invitation link that can be copied and shared manually; no email service is required, and the client retains only a non-sensitive session-presence hint locally.
 
-HR administrators can manage Departments and the Employee Directory, provision portal accounts, update reporting assignments, reset credentials without seeing passwords, export filtered audit CSV, and generate tenant-wide payroll-preparation summaries. Payroll exports include worked minutes, overtime, approved paid leave, and approved unpaid leave for the selected date range; they do not execute payroll.
+HR administrators can manage Departments and the Employee Directory, provision portal accounts through one-time copyable invitation links, update reporting assignments, generate one-time password-reset links without seeing passwords, export filtered audit CSV, and generate tenant-wide payroll-preparation summaries. Payroll exports include worked minutes, overtime, approved paid leave, and approved unpaid leave for the selected date range; they do not execute payroll.
 
 Docker exposes development PostgreSQL on port `55432` and isolated test PostgreSQL on `55433`, avoiding conflicts with native Windows installations. Run `npm run db:test:prepare` after creating `.env` to prepare the integration database.
 
