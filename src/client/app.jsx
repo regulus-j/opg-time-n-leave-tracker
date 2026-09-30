@@ -3549,7 +3549,21 @@ function Field({ label, onChange, error, helperText, id, className, required = f
   const contextualHelperText = helperText || (invitePassword ? "Optional: leave blank to generate a unique one-time invitation link to copy and paste." : label === "Organization name" && window.location.hash.startsWith("#/register") ? "Your workspace identifier is generated automatically." : "");
   const helperId = contextualHelperText ? `${inputId}-help` : "";
   const errorId = error ? `${inputId}-error` : "";
-  const { ["aria-describedby"]: externalDescribedBy, ...inputProps } = props;
+  const {
+    ["aria-describedby"]: externalDescribedBy,
+    name: explicitName,
+    ...inputProps
+  } = props;
+  const inputName = explicitName || {
+    "Organization ID": "tenant_id",
+    "Organization name": "name",
+    Timezone: "timezone",
+    Locale: "locale",
+    Currency: "currency",
+    "Support email": "support_email",
+    "Full name": "full_name",
+    Email: "email",
+  }[label];
   const describedBy = [externalDescribedBy, helperId, errorId].filter(Boolean).join(" ") || undefined;
   return (
     <label className="block text-sm font-semibold" htmlFor={inputId}>
@@ -3557,6 +3571,7 @@ function Field({ label, onChange, error, helperText, id, className, required = f
       <input
         id={inputId}
         aria-label={label}
+        name={inputName}
         aria-invalid={Boolean(error)}
         aria-describedby={describedBy}
         required={required && !invitePassword}
@@ -3679,14 +3694,37 @@ function PlatformOverview({ onEnter, notify }) {
   };
   const save = async (event) => {
     event.preventDefault();
+    // Browser autofill can update the visible input value without firing a
+    // React change event. Read named controls at submit time so the API gets
+    // the values the user can actually see.
+    const nativeForm = new FormData(event.currentTarget);
+    const nativeValue = (name, fallback = "") => {
+      const value = nativeForm.get(name);
+      return value === null ? fallback : String(value).trim();
+    };
+    const submitted = {
+      ...form,
+      tenant_id: nativeValue("tenant_id", form.tenant_id).toLowerCase(),
+      name: nativeValue("name", form.name),
+      timezone: nativeValue("timezone", form.timezone),
+      locale: nativeValue("locale", form.locale),
+      currency: nativeValue("currency", form.currency).toUpperCase(),
+      week_start: nativeValue("week_start", String(form.week_start)),
+      support_email: nativeValue("support_email", form.support_email),
+      initial_admin: {
+        ...form.initial_admin,
+        display_name: nativeValue("full_name", form.initial_admin?.display_name),
+        email: nativeValue("email", form.initial_admin?.email),
+      },
+    };
     setBusy(true);
     try {
       if (modal === "create") {
-        const created = await api.createPlatformTenant({ ...form, week_start: Number(form.week_start), initial_admin: form.initial_admin, support_email: form.support_email || undefined });
+        const created = await api.createPlatformTenant({ ...submitted, week_start: Number(submitted.week_start), support_email: submitted.support_email || undefined });
         const copied = await copyInvitationUrl(created.invite_url);
         notify(copied ? "Organization created. Invitation link copied." : created.invitation_delivery === "sent" ? "Organization created and invitation sent." : created.invitation_delivery === "failed" ? "Organization created, but the invitation could not be delivered. Use Resend invite after checking delivery configuration." : "Organization created. Invitation delivery is not configured.");
       } else {
-        await api.updatePlatformTenant(form.tenant_id, { name: form.name, timezone: form.timezone, locale: form.locale, week_start: Number(form.week_start), currency: form.currency, support_email: form.support_email || undefined });
+        await api.updatePlatformTenant(submitted.tenant_id, { name: submitted.name, timezone: submitted.timezone, locale: submitted.locale, week_start: Number(submitted.week_start), currency: submitted.currency, support_email: submitted.support_email || undefined });
         notify("Organization details updated.");
       }
       close();
