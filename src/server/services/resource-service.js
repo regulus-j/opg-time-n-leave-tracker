@@ -89,6 +89,27 @@ const assertDomainInvariants = async (
     if (duplicate.rowCount)
       throw new HttpError(409, "Duplicate Department", "An active department already uses that name or code.");
   }
+  if (resource === "job-profiles" && payload.status === "active") {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `job-profile:${tenantId}:${String(payload.title).toLowerCase()}:${payload.department_id}:${payload.effective_from}`,
+    ]);
+    const duplicate = await client.query(
+      `SELECT 1 FROM job_profiles
+       WHERE tenant_id=$1 AND status='active'
+         AND lower(title)=lower($2)
+         AND department_id=$3
+         AND effective_from=$4
+         AND job_id<>COALESCE($5,'')
+       LIMIT 1`,
+      [tenantId, payload.title, payload.department_id, payload.effective_from, currentId],
+    );
+    if (duplicate.rowCount)
+      throw new HttpError(
+        409,
+        "Duplicate Job Profile",
+        "An active job profile with this title, department, and effective date already exists.",
+      );
+  }
   if (resource === "job-leave-policies" && payload.status === "active") {
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
       `policy:${tenantId}:${payload.job_id}:${payload.leave_type_id}`,

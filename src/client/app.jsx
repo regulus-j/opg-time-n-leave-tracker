@@ -2525,6 +2525,7 @@ function Jobs({ data, refresh, notify }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [modal, setModal] = useState(false);
+  const [busy, setBusy] = useState(false);
   const departments = data.departments;
   const [form, setForm] = useState({
     title: "",
@@ -2547,6 +2548,8 @@ function Jobs({ data, refresh, notify }) {
   );
   const submit = async (e) => {
     e.preventDefault();
+    if (busy) return;
+    setBusy(true);
     try {
       await api.create("job-profiles", {
         ...form,
@@ -2562,6 +2565,8 @@ function Jobs({ data, refresh, notify }) {
       await refresh();
     } catch (error) {
       notify(error.message, "error");
+    } finally {
+      setBusy(false);
     }
   };
   const deactivate = async (item) => {
@@ -2694,7 +2699,9 @@ function Jobs({ data, refresh, notify }) {
               required
               onChange={(v) => setForm({ ...form, effective_from: v })}
             />
-            <Button className="w-full">Create job</Button>
+            <Button className="w-full" disabled={busy}>
+              {busy ? "Creating job…" : "Create job"}
+            </Button>
           </form>
         </Modal>
       )}
