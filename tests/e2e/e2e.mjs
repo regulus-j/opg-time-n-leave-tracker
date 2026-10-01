@@ -5,6 +5,10 @@ const credentials = {
     "admin@dev.local",
     process.env.SEED_ADMIN_PASSWORD || "Admin-dev-password-2026!",
   ],
+  hr: [
+    "hr@dev.local",
+    process.env.SEED_HR_PASSWORD || process.env.SEED_ADMIN_PASSWORD || "Admin-dev-password-2026!",
+  ],
   manager: [
     "manager@dev.local",
     process.env.SEED_USER_PASSWORD || "User-dev-password-2026!",
@@ -69,7 +73,7 @@ async function signIn(page, persona) {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.getByRole("heading", { name: "Make your time count." }).waitFor();
+  await page.getByRole("heading", { name: persona === "admin" ? "Platform overview" : "Make your time count." }).waitFor();
 }
 
 await test(
@@ -94,12 +98,22 @@ await test("administrator sees tenant administration and audit data", async (pag
   await page.getByRole("columnheader", { name: "Employee" }).waitFor();
   await page.getByRole("button", { name: "Departments", exact: true }).click();
   await page.getByRole("heading", { name: "Departments" }).waitFor();
-  await page.getByRole("button", { name: "Reports", exact: true }).click();
-  await page.getByRole("heading", { name: "Organization reports" }).waitFor();
-  await page.getByRole("button", { name: "Export monthly time logs" }).waitFor();
   await page.getByRole("button", { name: "Audit", exact: true }).click();
   await page.getByRole("heading", { name: "Audit events" }).waitFor();
   await page.getByRole("button", { name: "Export all filtered events" }).waitFor();
+});
+
+await test("HR exports monthly time logs", async (page) => {
+  await signIn(page, "hr");
+  await page.getByRole("button", { name: "Reports", exact: true }).click();
+  await page.getByRole("heading", { name: "Organization reports" }).waitFor();
+  await page.getByLabel("Report month").waitFor();
+  const exportButton = page.getByRole("button", { name: "Export monthly time logs" });
+  const downloadPromise = page.waitForEvent("download");
+  await exportButton.click();
+  const download = await downloadPromise;
+  if (download.suggestedFilename() !== "Monthly_Time_Logs.xls")
+    throw new Error(`unexpected timesheet filename: ${download.suggestedFilename()}`);
 });
 
 await test("operational user clocks attendance and submits correction and leave", async (page) => {

@@ -2932,7 +2932,6 @@ function LegacyOrganizationReports({ data, tenant }) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const selectedMonth = /^\d{4}-\d{2}$/.test(month || "") ? month : today.slice(0, 7);
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try { setReport(await api.report(preset, { q: query, status: status === "all" ? "" : status, department_id: department === "all" ? "" : department, manager_id: manager === "all" ? "" : manager, job_id: job === "all" ? "" : job, location_id: location === "all" ? "" : location, from, to, sort, page, page_size: pageSize })); } catch (failure) { setError(failure.message); } finally { setLoading(false); }
@@ -2967,6 +2966,7 @@ function OrganizationReports({ data, tenant }) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const selectedMonth = /^\d{4}-\d{2}$/.test(month || "") ? month : today.slice(0, 7);
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
