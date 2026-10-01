@@ -1,5 +1,6 @@
 import { pool } from "../config/database.js";
 import { HttpError } from "../views/problem-view.js";
+import { exportMonthlyTimesheet, monthDates } from "./monthly-timesheet-export.js";
 
 const presets = new Set(["payroll-timesheet", "organization-absenteeism", "overtime-by-department", "leave-balance-liability"]);
 const todayInZone = (timezone) => new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(new Date());
@@ -33,6 +34,41 @@ const baseFilters = (req, from, to) => {
   if (query.location_id) add("e.location_id=$VALUE", String(query.location_id));
   const leaveType = query.leave_type_id ? String(query.leave_type_id) : null;
   return { params, where, leaveType };
+};
+
+export const generateMonthlyTimesheet = async (req) => {
+  const dates = monthDates(req.query?.month);
+  if (!dates) throw new HttpError(422, "Invalid Month", "month must use the YYYY-MM format.");
+  const { params, where } = baseFilters(req, dates[0], dates[dates.length - 1]);
+  const result = await pool.query(
+    `WITH days AS (
+       SELECT generate_series($2::date, $3::date, interval '1 day')::date AS local_date
+     ), employees_scope AS (
+       SELECT e.employee_id,e.employee_number,e.name,e.job_id,j.title AS job_title,COALESCE(u.email,'') AS email
+       FROM employees e
+       JOIN job_profiles j ON j.tenant_id=e.tenant_id AND j.job_id=e.job_id
+       LEFT JOIN LATERAL (
+         SELECT email FROM users
+         WHERE tenant_id=e.tenant_id AND employee_id=e.employee_id
+         ORDER BY (status='active') DESC, user_id
+         LIMIT 1
+       ) u ON true
+       WHERE ${where.join(" AND ")}
+     ), attendance AS (
+       SELECT employee_id,local_date,COALESCE(sum(worked_mins),0)::integer AS worked_mins
+       FROM attendance_summaries
+       WHERE tenant_id=$1 AND local_date BETWEEN $2::date AND $3::date
+       GROUP BY employee_id,local_date
+     )
+     SELECT s.employee_id,s.employee_number,s.name,s.job_id,s.job_title,s.email,
+            jsonb_object_agg(to_char(d.local_date,'YYYY-MM-DD'),COALESCE(a.worked_mins,0) ORDER BY d.local_date) AS daily
+     FROM employees_scope s CROSS JOIN days d
+     LEFT JOIN attendance a ON a.employee_id=s.employee_id AND a.local_date=d.local_date
+     GROUP BY s.employee_id,s.employee_number,s.name,s.job_id,s.job_title,s.email
+     ORDER BY s.name ASC,s.employee_id ASC`,
+    params,
+  );
+  return { month: req.query.month, dates, rows: result.rows, workbook: exportMonthlyTimesheet({ rows: result.rows, dates }) };
 };
 
 const payroll = async (req, info, all) => {

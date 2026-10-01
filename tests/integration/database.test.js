@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import request from "supertest";
+import * as XLSX from "xlsx";
+
+const binaryParser = (response, callback) => {
+  const chunks = [];
+  response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+  response.on("end", () => callback(null, Buffer.concat(chunks)));
+};
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -205,6 +212,16 @@ test(
     assert.equal(payrollCsv.status, 200);
     assert.match(payrollCsv.headers["content-type"], /text\/csv/);
     assert.match(payrollCsv.text, /paid_leave_units/);
+    const payrollXls = await admin.get("/api/v1/reports/payroll-timesheet.xls?month=2026-09").buffer(true).parse(binaryParser);
+    assert.equal(payrollXls.status, 200);
+    assert.match(payrollXls.headers["content-type"], /application\/vnd\.ms-excel/);
+    assert.match(payrollXls.headers["content-disposition"], /Monthly_Time_Logs\.xls/);
+    assert.deepEqual(Array.from(payrollXls.body.subarray(0, 4)), [0xd0, 0xcf, 0x11, 0xe0]);
+    const payrollWorkbook = XLSX.read(payrollXls.body, { type: "buffer" });
+    assert.deepEqual(payrollWorkbook.SheetNames, ["Monthly Time Logs_Hours_1", "Monthly Time Logs_Decimal_2"]);
+    assert.equal(payrollWorkbook.Sheets["Monthly Time Logs_Hours_1"].G1.v, "01-Sep-2026");
+    const invalidPayrollXls = await admin.get("/api/v1/reports/payroll-timesheet.xls?month=2026-13");
+    assert.equal(invalidPayrollXls.status, 422);
     const auditCsv = await admin.get("/api/v1/audit-events/export.csv?q=seed");
     assert.equal(auditCsv.status, 200);
     assert.match(auditCsv.text, /event_id/);

@@ -96,7 +96,7 @@ await test("administrator sees tenant administration and audit data", async (pag
   await page.getByRole("heading", { name: "Departments" }).waitFor();
   await page.getByRole("button", { name: "Reports", exact: true }).click();
   await page.getByRole("heading", { name: "Organization reports" }).waitFor();
-  await page.getByRole("button", { name: "Export all filtered rows" }).waitFor();
+  await page.getByRole("button", { name: "Export monthly time logs" }).waitFor();
   await page.getByRole("button", { name: "Audit", exact: true }).click();
   await page.getByRole("heading", { name: "Audit events" }).waitFor();
   await page.getByRole("button", { name: "Export all filtered events" }).waitFor();

@@ -2932,6 +2932,7 @@ function LegacyOrganizationReports({ data, tenant }) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const selectedMonth = /^\d{4}-\d{2}$/.test(month || "") ? month : today.slice(0, 7);
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try { setReport(await api.report(preset, { q: query, status: status === "all" ? "" : status, department_id: department === "all" ? "" : department, manager_id: manager === "all" ? "" : manager, job_id: job === "all" ? "" : job, location_id: location === "all" ? "" : location, from, to, sort, page, page_size: pageSize })); } catch (failure) { setError(failure.message); } finally { setLoading(false); }
@@ -2952,6 +2953,7 @@ function OrganizationReports({ data, tenant }) {
     manager: "all",
     job: "all",
     location: "all",
+    month: today.slice(0, 7),
     from: `${today.slice(0, 8)}01`,
     to: today,
     sort: "name",
@@ -2959,7 +2961,7 @@ function OrganizationReports({ data, tenant }) {
     pageSize: "25",
   };
   const [view, setView, resetView] = useDataViewState("organization-reports", defaults);
-  const { preset, query, status, department, manager, job, location, from, to, sort } = view;
+  const { preset, query, status, department, manager, job, location, month, from, to, sort } = view;
   const page = Number(view.page) || 1;
   const pageSize = Number(view.pageSize) || 25;
   const [report, setReport] = useState(null);
@@ -2969,6 +2971,8 @@ function OrganizationReports({ data, tenant }) {
     setLoading(true);
     setError("");
     try {
+      const reportFrom = preset === "payroll-timesheet" ? `${selectedMonth}-01` : from;
+      const reportTo = preset === "payroll-timesheet" ? new Date(Date.UTC(Number(selectedMonth.slice(0, 4)), Number(selectedMonth.slice(5, 7)), 0)).toISOString().slice(0, 10) : to;
       setReport(await api.report(preset, {
         q: query,
         status: status === "all" ? "" : status,
@@ -2976,8 +2980,8 @@ function OrganizationReports({ data, tenant }) {
         manager_id: manager === "all" ? "" : manager,
         job_id: job === "all" ? "" : job,
         location_id: location === "all" ? "" : location,
-        from,
-        to,
+        from: reportFrom,
+        to: reportTo,
         sort,
         page,
         page_size: pageSize,
@@ -2987,19 +2991,21 @@ function OrganizationReports({ data, tenant }) {
     } finally {
       setLoading(false);
     }
-  }, [preset, query, status, department, manager, job, location, from, to, sort, page, pageSize]);
+  }, [preset, query, status, department, manager, job, location, selectedMonth, from, to, sort, page, pageSize]);
   useEffect(() => { load(); }, [load]);
   const download = async () => {
     try {
-      const result = await api.downloadCsv(`/reports/${preset}.csv?${new URLSearchParams({
+      const reportFrom = preset === "payroll-timesheet" ? `${selectedMonth}-01` : from;
+      const reportTo = preset === "payroll-timesheet" ? new Date(Date.UTC(Number(selectedMonth.slice(0, 4)), Number(selectedMonth.slice(5, 7)), 0)).toISOString().slice(0, 10) : to;
+      const extension = preset === "payroll-timesheet" ? "xls" : "csv";
+      const result = await api.downloadCsv(`/reports/${preset}.${extension}?${new URLSearchParams({
         q: query,
         status: status === "all" ? "" : status,
         department_id: department === "all" ? "" : department,
         manager_id: manager === "all" ? "" : manager,
         job_id: job === "all" ? "" : job,
         location_id: location === "all" ? "" : location,
-        from,
-        to,
+        ...(preset === "payroll-timesheet" ? { month: selectedMonth } : { from: reportFrom, to: reportTo }),
         sort,
       })}`);
       const link = document.createElement("a");
@@ -3021,7 +3027,7 @@ function OrganizationReports({ data, tenant }) {
   const setFilter = (key, value) => setView({ [key]: value, page: "1" });
   return (
     <div className="space-y-5">
-      <Header title="Organization reports" detail="Tenant-wide reporting for HR and payroll preparation. Exports include every matching row." action={<Button onClick={download} disabled={loading}>Export all filtered rows</Button>} />
+      <Header title="Organization reports" detail="Tenant-wide reporting for HR and payroll preparation. Exports include every matching row." action={<Button onClick={download} disabled={loading}>{preset === "payroll-timesheet" ? "Export monthly time logs" : "Export all filtered rows"}</Button>} />
       <div className="flex flex-wrap gap-2">
         {[["payroll-timesheet", "Payroll timesheet"], ["organization-absenteeism", "Absenteeism"], ["overtime-by-department", "Overtime by department"], ["leave-balance-liability", "Leave liability"]].map(([value, label]) => <Button key={value} variant={preset === value ? "secondary" : "outline"} onClick={() => setView({ preset: value, page: "1" })}>{label}</Button>)}
       </div>
@@ -3044,8 +3050,7 @@ function OrganizationReports({ data, tenant }) {
         ]}
         onClear={() => resetView()}
       >
-        <label className="text-sm font-semibold">From<input aria-label="Report from" type="date" value={from} onChange={(event) => setFilter("from", event.target.value)} className="mt-2 block h-11 rounded-lg border bg-white px-3" /></label>
-        <label className="text-sm font-semibold">To<input aria-label="Report to" type="date" value={to} onChange={(event) => setFilter("to", event.target.value)} className="mt-2 block h-11 rounded-lg border bg-white px-3" /></label>
+        {preset === "payroll-timesheet" ? <label className="text-sm font-semibold">Month<input aria-label="Report month" type="month" value={month} onChange={(event) => setFilter("month", event.target.value)} className="mt-2 block h-11 rounded-lg border bg-white px-3" /></label> : <><label className="text-sm font-semibold">From<input aria-label="Report from" type="date" value={from} onChange={(event) => setFilter("from", event.target.value)} className="mt-2 block h-11 rounded-lg border bg-white px-3" /></label><label className="text-sm font-semibold">To<input aria-label="Report to" type="date" value={to} onChange={(event) => setFilter("to", event.target.value)} className="mt-2 block h-11 rounded-lg border bg-white px-3" /></label></>}
       </FilterToolbar>
       {loading ? <Loading /> : error ? <ErrorState message={error} retry={load} /> : <>
         <Card><CardContent className="space-y-2 pt-6"><p className="font-semibold">{report?.title}</p><p className="text-sm text-muted-foreground">{report?.basis}</p><p className="text-xs text-muted-foreground">{report?.total || 0} matching rows · generated {dateTime(report?.generated_at)} · {report?.tenant?.timezone}</p></CardContent></Card>

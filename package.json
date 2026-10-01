@@ -46,7 +46,8 @@
     "tailwind-merge": "latest",
     "tailwindcss": "3.4.17",
     "typescript": "^7.0.2",
-    "vite": "latest"
+    "vite": "latest",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "axe-core": "^4.13.0",

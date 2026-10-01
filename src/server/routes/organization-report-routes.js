@@ -9,6 +9,12 @@ const rowValue = (row, key, result) => key === "employee_name" ? row.name : key 
 
 export const organizationReportRoutes = (app, requireCapability) => {
   const router = express.Router();
+  router.get("/payroll-timesheet.xls", requireCapability("users:write"), async (req, res, next) => {
+    try {
+      const result = await service.generateMonthlyTimesheet(req);
+      res.type("application/vnd.ms-excel").set("Content-Disposition", "attachment; filename=Monthly_Time_Logs.xls").send(result.workbook);
+    } catch (error) { next(error); }
+  });
   router.get("/:preset.csv", requireCapability("users:write"), async (req, res, next) => {
     try {
       const result = await service.generateReport(req, { all: true });
